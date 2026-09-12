@@ -55,6 +55,15 @@ function getDummyHash(): Promise<string> {
 }
 
 /**
+ * Computes and caches the dummy hash up front. Call once at startup (see `buildApp`) so
+ * the first unknown-email login doesn't pay the one-time argon2 cost inline, which would
+ * otherwise skew that single request's timing relative to later ones.
+ */
+export function warmDummyHash(): Promise<string> {
+  return getDummyHash();
+}
+
+/**
  * Registers a new user. `input` is validated with `credentialsSchema` (throws `ZodError`
  * on an invalid shape/short password) and throws `ConflictError` if the (normalized) email
  * is already taken.

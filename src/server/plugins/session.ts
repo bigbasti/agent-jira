@@ -117,7 +117,7 @@ export async function registerSessionPlugin(app: FastifyInstance, config: AppCon
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
-      secure: config.publicUrl.startsWith('https'),
+      secure: config.publicUrl.toLowerCase().startsWith('https'),
       maxAge: THIRTY_DAYS_MS,
       path: '/',
     },
