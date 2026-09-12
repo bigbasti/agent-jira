@@ -3,7 +3,7 @@ import {alias} from 'drizzle-orm/sqlite-core';
 import {nanoid} from 'nanoid';
 import {z} from 'zod';
 import type {Database} from '../db/index.js';
-import {projects, stories, storyDependencies, storyUpdates} from '../db/schema.js';
+import {agents, projects, stories, storyDependencies, storyUpdates} from '../db/schema.js';
 import type {EventHub} from '../events/hub.js';
 import {NotFoundError} from './projects.js';
 import {rankBetween} from '../../shared/rank.js';
@@ -192,6 +192,22 @@ function requireOwnedStory(db: Queryable, userId: string, storyId: string): Stor
   return row;
 }
 
+/**
+ * Confirms an agent identity belongs to `userId`. Today `userId` and `agentId` both come
+ * out of the same OAuth token so they always agree, but the service must not depend on its
+ * callers for that: an agent id is an authorisation, and it is checked here.
+ */
+function requireOwnedAgent(db: Queryable, userId: string, agentId: string): void {
+  const row = db
+    .select({id: agents.id})
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
+    .get();
+  if (!row) {
+    throw new NotFoundError('Agent not found');
+  }
+}
+
 function requireOwnedProject(db: Queryable, userId: string, projectId: string): void {
   const row = db
     .select({id: projects.id})
@@ -275,39 +291,47 @@ function lastRankIn(db: Queryable, userId: string, status: Status, exceptStoryId
   return row?.rank ?? null;
 }
 
-/** The rank of a neighbour named in a move, which must be a story of `userId` in `status`. */
-function neighbourRank(db: Queryable, userId: string, status: Status, neighbourId: string): string {
+/**
+ * The rank of a neighbour named in a move. Returns `null` when the neighbour is one of
+ * `userId`'s stories but no longer sits in `status` — a drop computed against a board that
+ * someone else has since reordered is stale, not invalid, and must not fail the drag.
+ * A neighbour that does not exist, or belongs to another user, is still `NotFoundError`.
+ */
+function neighbourRank(db: Queryable, userId: string, status: Status, neighbourId: string): string | null {
   const row = db
     .select({rank: stories.rank, status: stories.status})
     .from(stories)
     .where(and(eq(stories.id, neighbourId), eq(stories.userId, userId)))
     .get();
-  if (!row || row.status !== status) {
-    throw new NotFoundError(`No story ${neighbourId} in ${status}`);
+  if (!row) {
+    throw new NotFoundError(`No story ${neighbourId}`);
   }
-  return row.rank;
+  return row.status === status ? row.rank : null;
 }
 
 /**
- * Where the moved story lands: between `beforeId` and `afterId` when either is given,
- * otherwise at the end of the target column — except that a move within the same column
- * with no neighbours is not a reorder at all, and keeps the rank it has.
+ * Where the moved story lands: between `beforeId` and `afterId`, or at the end of the
+ * target column when neither survives. A move within the same column with no neighbours at
+ * all is not a reorder, and keeps the rank it has.
  */
 function rankForMove(db: Queryable, existing: StoryRow, input: MoveStoryInput, status: Status): string {
   const {userId, storyId} = input;
   // A story is never its own neighbour; the client may still send it while dragging.
   const beforeId = input.beforeId && input.beforeId !== storyId ? input.beforeId : null;
   const afterId = input.afterId && input.afterId !== storyId ? input.afterId : null;
+  const endOfColumn = () => rankBetween(lastRankIn(db, userId, status, storyId), null);
 
   if (!beforeId && !afterId) {
-    if (status === existing.status) {
-      return existing.rank;
-    }
-    return rankBetween(lastRankIn(db, userId, status, storyId), null);
+    return status === existing.status ? existing.rank : endOfColumn();
   }
 
   const before = beforeId ? neighbourRank(db, userId, status, beforeId) : null;
   const after = afterId ? neighbourRank(db, userId, status, afterId) : null;
+  if (before === null && after === null) {
+    // Both named neighbours have moved on since the client last saw the board.
+    return endOfColumn();
+  }
+
   try {
     return rankBetween(before, after);
   } catch (err) {
@@ -433,11 +457,13 @@ export function updateStory(db: Database, hub: EventHub, userId: string, storyId
  * `canTransition` is the only judge of whether the move is allowed; a refusal becomes a
  * `TransitionError` carrying its reason. An agent may additionally only move a story it
  * has claimed — the one exception being the claim itself (`todo -> in_progress`), which is
- * what takes ownership, and which is refused when another agent already holds the story.
+ * what takes ownership, and which is refused when another agent already holds the story or
+ * when the story is still blocked by an unfinished dependency.
  *
- * Landing in `todo` releases the story: the claim, the stop request and the play request
- * are all cleared. Coming from `finished` or `accepted` that is rework rather than a
- * release, so the progress bar starts over too.
+ * Landing in `todo` from another column releases the story: the claim, the stop request and
+ * the play request are all cleared. Coming from `finished` or `accepted` that is rework
+ * rather than a release, so the progress bar starts over too. A move from `todo` to `todo`
+ * is only a reorder of the queue and clears nothing.
  *
  * Every move that changes the column records a `status_change` update and publishes
  * `story.update` alongside `story.moved`, after the transaction commits. A move within one
@@ -463,10 +489,19 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
       if (!agentId) {
         throw new TransitionError('An agent must identify itself to move a story.');
       }
+      requireOwnedAgent(tx, userId, agentId);
       author = {authorType: 'agent', authorId: agentId};
       if (from === 'todo' && status === 'in_progress') {
         if (claimedByAgentId !== null && claimedByAgentId !== agentId) {
           throw new TransitionError('That story is already claimed by another agent.');
+        }
+        // A blocked story may sit in `todo`, but no agent may pick it up — this is the one
+        // enforcement point both the MCP tools and the board go through. A human moving a
+        // blocked story on is a deliberate override and stays allowed.
+        const {edges, statusOf} = dependencyContext(tx, userId);
+        const blockers = blockedBy(storyId, edges, statusOf);
+        if (blockers.length > 0) {
+          throw new TransitionError(`That story is blocked by ${blockers.join(', ')} and cannot be claimed yet.`);
         }
         claimedByAgentId = agentId;
       } else if (claimedByAgentId !== agentId) {
@@ -474,7 +509,9 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
       }
     }
 
-    const releasing = status === 'todo';
+    // Landing in `todo` from another column releases the story. A move that starts and ends
+    // in `todo` is a reorder of the queue, and must leave a pending play or stop alone.
+    const releasing = status === 'todo' && from !== 'todo';
     const rework = releasing && (from === 'finished' || from === 'accepted');
     const patch = {
       status,
@@ -514,22 +551,28 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
 
 /**
  * Records how far along a story is. `progressPct` must be an integer in 0..100 — anything
- * else is a `ZodError`, never a silent clamp. When `agentId` is given the agent must hold
- * the claim. Appends a `progress` update and publishes `story.progress` plus
+ * else is a `ZodError`, never a silent clamp. An omitted `label` leaves the current one in
+ * place; `''` clears it. When `agentId` is given it must be one of `userId`'s agents, and
+ * it must hold the claim. Appends a `progress` update and publishes `story.progress` plus
  * `story.update` after the transaction commits.
  */
 export function postProgress(db: Database, hub: EventHub, input: PostProgressInput): Story {
   const {userId, storyId, agentId} = input;
   // Re-validated here rather than only in the route: the MCP server calls this directly.
-  const {progressPct, label} = progressSchema.parse({progressPct: input.progressPct, label: input.label ?? ''});
-  const progressLabel = label ?? '';
+  const {progressPct, label} = progressSchema.parse({progressPct: input.progressPct, label: input.label});
 
   const {story, update} = db.transaction(tx => {
     const existing = requireOwnedStory(tx, userId, storyId);
-    if (agentId && existing.claimedByAgentId !== agentId) {
-      throw new TransitionError('Agents can only report progress on stories they have claimed.');
+    if (agentId) {
+      requireOwnedAgent(tx, userId, agentId);
+      if (existing.claimedByAgentId !== agentId) {
+        throw new TransitionError('Agents can only report progress on stories they have claimed.');
+      }
     }
 
+    // No label means "the bar moved", not "the bar lost its caption": an agent posting a
+    // bare percentage keeps whatever it last said it was doing.
+    const progressLabel = label ?? existing.progressLabel;
     const patch = {progressPct, progressLabel, updatedAt: Date.now()};
     tx.update(stories)
       .set(patch)
@@ -548,7 +591,7 @@ export function postProgress(db: Database, hub: EventHub, input: PostProgressInp
     return {story: hydrate(tx, userId, {...existing, ...patch}), update: storyUpdate};
   });
 
-  hub.publish(userId, {type: 'story.progress', id: storyId, progressPct, progressLabel});
+  hub.publish(userId, {type: 'story.progress', id: storyId, progressPct, progressLabel: story.progressLabel});
   hub.publish(userId, {type: 'story.update', storyId, update});
   return story;
 }

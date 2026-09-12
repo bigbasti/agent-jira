@@ -2,7 +2,8 @@ import {describe, it, expect, beforeEach} from 'vitest';
 import {eq, or} from 'drizzle-orm';
 import {createHarness} from '../testing/harness.js';
 import {agents, storyDependencies, storyUpdates} from '../db/schema.js';
-import {moveStory, TransitionError} from '../services/stories.js';
+import {moveStory, postProgress, TransitionError} from '../services/stories.js';
+import {NotFoundError} from '../services/projects.js';
 import {DEFAULT_MODEL_ID} from '../../shared/models.js';
 import type {ServerEvent, Story, StoryUpdate} from '../../shared/types.js';
 
@@ -451,6 +452,138 @@ describe('stories', () => {
     expect(await timeline(cookieA, story.id)).toEqual([]);
     const boardB = await h.app.inject({method: 'GET', url: '/api/board', headers: {cookie: cookieB}});
     expect(boardB.json().stories).toEqual([]);
+  });
+
+  it('keeps a pending play when a todo story is only reordered', async () => {
+    const {cookie, projectId} = await setup();
+    const queued = await createStory(cookie, {projectId, title: 'Queued'});
+    const other = await createStory(cookie, {projectId, title: 'Other'});
+    await move(cookie, queued.id, {status: 'todo'});
+    await move(cookie, other.id, {status: 'todo'});
+
+    const played = await post(cookie, `/api/stories/${queued.id}/play`);
+    const playRequestedAt = played.json().playRequestedAt as number;
+    expect(playRequestedAt).toBeGreaterThan(0);
+    await post(cookie, `/api/stories/${queued.id}/stop`);
+
+    // Dragging a queued card up its own column must not silently un-queue it.
+    const reordered = await move(cookie, queued.id, {status: 'todo', afterId: other.id});
+    expect(reordered.statusCode).toBe(200);
+    expect(reordered.json()).toMatchObject({status: 'todo', playRequestedAt, stopRequested: true});
+    expect(reordered.json().rank < other.rank).toBe(true);
+
+    // Arriving in todo from another column still releases the story.
+    await move(cookie, queued.id, {status: 'in_progress'});
+    const released = await move(cookie, queued.id, {status: 'todo'});
+    expect(released.json()).toMatchObject({playRequestedAt: null, stopRequested: false});
+  });
+
+  it('refuses to let an agent claim a blocked story, but lets a human move it', async () => {
+    const {cookie, user, projectId} = await setup();
+    const agentId = addAgent(user.id, 'agent-1');
+    const blocker = await createStory(cookie, {projectId, title: 'Blocker'});
+    const blocked = await createStory(cookie, {projectId, title: 'Blocked', dependsOn: [blocker.id]});
+    await move(cookie, blocked.id, {status: 'todo'});
+    expect((await getStory(cookie, blocked.id)).blockedBy).toEqual([blocker.id]);
+
+    const claim = {userId: user.id, storyId: blocked.id, status: 'in_progress' as const, actor: 'agent' as const, agentId};
+    expect(() => moveStory(h.db, h.app.hub, claim)).toThrow(TransitionError);
+    expect(() => moveStory(h.db, h.app.hub, claim)).toThrow(new RegExp(blocker.id));
+    expect(await getStory(cookie, blocked.id)).toMatchObject({status: 'todo', claimedByAgentId: null});
+
+    // A human may deliberately override the block.
+    const forced = await move(cookie, blocked.id, {status: 'in_progress'});
+    expect(forced.statusCode).toBe(200);
+
+    // Once the blocker is finished the agent can claim the story itself.
+    await move(cookie, blocked.id, {status: 'todo'});
+    await move(cookie, blocker.id, {status: 'todo'});
+    await move(cookie, blocker.id, {status: 'in_progress'});
+    await move(cookie, blocker.id, {status: 'in_test'});
+    await move(cookie, blocker.id, {status: 'finished'});
+    expect(moveStory(h.db, h.app.hub, claim).claimedByAgentId).toBe(agentId);
+  });
+
+  it("refuses an agent identity that belongs to another user", async () => {
+    const {cookie, user, projectId} = await setup('a@example.com');
+    const {user: userB} = await setup('b@example.com');
+    const foreignAgent = addAgent(userB.id, 'agent-b');
+    const story = await createStory(cookie, {projectId, title: 'Mine'});
+    await move(cookie, story.id, {status: 'todo'});
+
+    expect(() =>
+      moveStory(h.db, h.app.hub, {
+        userId: user.id,
+        storyId: story.id,
+        status: 'in_progress',
+        actor: 'agent',
+        agentId: foreignAgent,
+      }),
+    ).toThrow(NotFoundError);
+    expect(await getStory(cookie, story.id)).toMatchObject({status: 'todo', claimedByAgentId: null});
+
+    // The same check guards progress reporting.
+    const mine = addAgent(user.id, 'agent-a');
+    moveStory(h.db, h.app.hub, {userId: user.id, storyId: story.id, status: 'in_progress', actor: 'agent', agentId: mine});
+    expect(() =>
+      postProgress(h.db, h.app.hub, {userId: user.id, storyId: story.id, progressPct: 10, agentId: foreignAgent}),
+    ).toThrow(NotFoundError);
+    expect((await getStory(cookie, story.id)).progressPct).toBe(0);
+  });
+
+  it('places the card at the end of the column when a drag neighbour has moved on', async () => {
+    const {cookie, projectId} = await setup();
+    const first = await createStory(cookie, {projectId, title: 'First'});
+    const second = await createStory(cookie, {projectId, title: 'Second'});
+    const dragged = await createStory(cookie, {projectId, title: 'Dragged'});
+    // Another client moves `first` out of draft between the drag starting and landing.
+    await move(cookie, first.id, {status: 'todo'});
+
+    const res = await move(cookie, dragged.id, {status: 'draft', beforeId: first.id, afterId: second.id});
+    expect(res.statusCode).toBe(200);
+    // `first` is stale, so only `second` constrains the drop.
+    expect(res.json().rank < second.rank).toBe(true);
+
+    const bothStale = await move(cookie, second.id, {status: 'draft', beforeId: first.id, afterId: first.id});
+    expect(bothStale.statusCode).toBe(200);
+    expect(bothStale.json().rank > res.json().rank).toBe(true);
+  });
+
+  it('404s on a drag neighbour that does not exist or is another user\'s', async () => {
+    const {cookie: cookieA, projectId: projectA} = await setup('a@example.com');
+    const foreign = await createStory(cookieA, {projectId: projectA, title: "A's card"});
+    const {cookie, projectId} = await setup('b@example.com');
+    const story = await createStory(cookie, {projectId, title: 'Mine'});
+
+    expect((await move(cookie, story.id, {status: 'draft', beforeId: 'no-such-story'})).statusCode).toBe(404);
+    expect((await move(cookie, story.id, {status: 'draft', afterId: foreign.id})).statusCode).toBe(404);
+    expect((await getStory(cookie, story.id)).rank).toBe(story.rank);
+  });
+
+  it('keeps the current progress label when a caller reports a bare percentage', async () => {
+    const {cookie, projectId} = await setup();
+    const story = await createStory(cookie, {projectId, title: 'Labelled'});
+
+    await post(cookie, `/api/stories/${story.id}/progress`, {progressPct: 25, label: 'Writing the tests'});
+    const bare = await post(cookie, `/api/stories/${story.id}/progress`, {progressPct: 40});
+    expect(bare.statusCode).toBe(200);
+    expect(bare.json()).toMatchObject({progressPct: 40, progressLabel: 'Writing the tests'});
+
+    // An explicit empty label still clears it.
+    const cleared = await post(cookie, `/api/stories/${story.id}/progress`, {progressPct: 45, label: ''});
+    expect(cleared.json()).toMatchObject({progressPct: 45, progressLabel: ''});
+  });
+
+  it('409s with a reason when the move is not allowed', async () => {
+    const {cookie, projectId} = await setup();
+    const story = await createStory(cookie, {projectId, title: 'Impatient'});
+
+    const res = await move(cookie, story.id, {status: 'finished'});
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({error: 'transition_refused'});
+    expect(String(res.json().message)).toMatch(/draft.*finished/i);
+    expect((await getStory(cookie, story.id)).status).toBe('draft');
+    expect(await timeline(cookie, story.id)).toEqual([]);
   });
 
   it('all story routes require auth', async () => {
