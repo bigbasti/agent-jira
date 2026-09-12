@@ -2,6 +2,7 @@ import {screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {App} from './App.js';
+import {makeBoard} from './testing/fixtures.js';
 import {jsonResponse, mockFetch, renderWithClient} from './testing/render.js';
 
 afterEach(() => {
@@ -30,10 +31,13 @@ describe('App', () => {
   });
 
   it('shows the board for a signed-in user', async () => {
-    routeFetch({'/api/me': () => jsonResponse(200, USER)});
+    routeFetch({
+      '/api/me': () => jsonResponse(200, USER),
+      '/api/board': () => jsonResponse(200, makeBoard()),
+    });
     renderWithClient(<App />);
 
-    expect(await screen.findByText('dev@example.com')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', {name: /Draft/})).toBeInTheDocument();
     expect(screen.queryByRole('tab', {name: 'Sign in'})).toBeNull();
   });
 
@@ -42,6 +46,7 @@ describe('App', () => {
     let session: 'active' | 'ended' = 'active';
     const fetchMock = routeFetch({
       '/api/me': () => (session === 'active' ? jsonResponse(200, USER) : jsonResponse(401, {error: 'unauthorized'})),
+      '/api/board': () => jsonResponse(200, makeBoard()),
       '/api/auth/logout': () => {
         session = 'ended';
         return jsonResponse(204);
@@ -49,7 +54,8 @@ describe('App', () => {
     });
     renderWithClient(<App />);
 
-    await user.click(await screen.findByRole('button', {name: 'Log out'}));
+    await user.click(await screen.findByRole('button', {name: 'Account'}));
+    await user.click(await screen.findByRole('menuitem', {name: 'Log out'}));
 
     expect(await screen.findByRole('tab', {name: 'Sign in'})).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.anything()));

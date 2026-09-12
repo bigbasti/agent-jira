@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type {ReactNode} from 'react';
+import type {ComponentPropsWithoutRef, ReactNode} from 'react';
 
 export type ChipTone = 'neutral' | 'accent' | 'amber' | 'emerald' | 'rose';
 
@@ -11,14 +11,13 @@ const TONES: Record<ChipTone, string> = {
   rose: 'border-rose/30 bg-rose-wash text-rose',
 };
 
-export interface ChipProps {
+export interface ChipProps extends Omit<ComponentPropsWithoutRef<'span'>, 'children'> {
   tone?: ChipTone;
-  className?: string;
   children: ReactNode;
 }
 
 /** The only place a status hue is allowed to appear. */
-export function Chip({tone = 'neutral', className, children}: ChipProps) {
+export function Chip({tone = 'neutral', className, children, ...props}: ChipProps) {
   return (
     <span
       className={clsx(
@@ -26,6 +25,7 @@ export function Chip({tone = 'neutral', className, children}: ChipProps) {
         TONES[tone],
         className,
       )}
+      {...props}
     >
       {children}
     </span>

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import type {ButtonHTMLAttributes} from 'react';
+import type {ComponentPropsWithRef} from 'react';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost';
 export type ButtonSize = 'sm' | 'md';
@@ -16,7 +16,7 @@ const SIZES: Record<ButtonSize, string> = {
   md: 'h-9 px-4 text-body',
 };
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ComponentPropsWithRef<'button'> {
   variant?: ButtonVariant;
   size?: ButtonSize;
 }
