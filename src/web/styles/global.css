@@ -1,0 +1,142 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/*
+ * `inline` keeps the utilities pointing at the raw custom properties, so flipping
+ * `data-theme` on <html> re-colours everything without regenerating a single class.
+ */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-well: var(--well);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-solid-hover: var(--accent-solid-hover);
+  --color-accent-solid-active: var(--accent-solid-active);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-text: var(--accent-text);
+  --color-accent-wash: var(--accent-wash);
+  --color-amber: var(--amber);
+  --color-amber-wash: var(--amber-wash);
+  --color-emerald: var(--emerald);
+  --color-emerald-wash: var(--emerald-wash);
+  --color-rose: var(--rose);
+  --color-rose-wash: var(--rose-wash);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* A tight six-step scale: dense enough for a board, with real jumps at the top. */
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1rem;
+  --text-micro--letter-spacing: 0.01em;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.125rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+  --text-lede: 1rem;
+  --text-lede--line-height: 1.5rem;
+  --text-lede--letter-spacing: -0.01em;
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.5rem;
+  --text-title--letter-spacing: -0.02em;
+  --text-display: 1.625rem;
+  --text-display--line-height: 1.75rem;
+  --text-display--letter-spacing: -0.03em;
+
+  --radius-chip: 6px;
+  --radius-well: 8px;
+  --radius-card: 10px;
+
+  --ease-console: cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* One focus treatment for the whole app: an accent ring, always visible on keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-chip);
+  }
+
+  ::selection {
+    background-color: var(--accent-wash);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline-strong) transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /*
+   * The 4px spacing grid, drawn. Eight units between lines, masked to a soft pool so the
+   * sign-in card looks like it is sitting on drafting paper rather than on a pattern.
+   */
+  .drafting-grid {
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: center;
+    mask-image: radial-gradient(115% 80% at 50% 42%, #000 0%, #000 40%, transparent 76%);
+  }
+
+  /* The one piece of unprompted motion in the app: a terminal caret on the wordmark. */
+  .caret {
+    display: inline-block;
+    width: 0.5rem;
+    height: 1.05em;
+    translate: 0 0.12em;
+    background-color: var(--accent);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .caret {
+      animation: caret-blink 1.2s steps(1, end) infinite;
+    }
+  }
+
+  @keyframes caret-blink {
+    0%,
+    55% {
+      opacity: 1;
+    }
+    56%,
+    100% {
+      opacity: 0.15;
+    }
+  }
+}

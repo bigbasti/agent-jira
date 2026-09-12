@@ -1,0 +1,79 @@
+/*
+ * Design tokens for the agent-jira console.
+ *
+ * Elevation is expressed as steps of surface plus a hairline, never as a shadow:
+ * canvas (the room) -> surface (a panel) -> raised (a control sitting on a panel).
+ * `well` runs the other way: an inset the user types into.
+ *
+ * The accent is reserved for progress, active agents and primary actions. Status hues
+ * are only ever used on small chips. The light theme is the same set of roles with the
+ * steps rebalanced, so every component is written once against the role names.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --canvas: #0b0c0f;
+  --surface: #131519;
+  --raised: #1a1d23;
+  --well: #0e1014;
+  --hairline: #24272f;
+  --hairline-strong: #323744;
+
+  --text: #e6e8ec;
+  --muted: #8a9099;
+
+  /* Identity violet: progress fills, rings, active agents. */
+  --accent: #7c5cff;
+  /* Deepened for solid fills so white sits at 5.4:1 on it. */
+  --accent-solid: #6d4af0;
+  --accent-solid-hover: #7e5ef7;
+  --accent-solid-active: #5d3ce0;
+  --accent-ink: #ffffff;
+  /* Lightened for accent-coloured text on the dark canvas (7:1). */
+  --accent-text: #a08cff;
+  --accent-wash: rgb(124 92 255 / 0.12);
+
+  --amber: #e3a94f;
+  --amber-wash: rgb(227 169 79 / 0.12);
+  --emerald: #46c48f;
+  --emerald-wash: rgb(70 196 143 / 0.12);
+  --rose: #f4627e;
+  --rose-wash: rgb(244 98 126 / 0.12);
+
+  /* The 4px drafting grid drawn behind the sign-in screen. */
+  --grid-line: rgb(230 232 236 / 0.055);
+
+  --ease-console: cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --canvas: #eceef3;
+  --surface: #f7f8fb;
+  --raised: #ffffff;
+  --well: #e4e7ee;
+  --hairline: #d7dce5;
+  --hairline-strong: #bcc4d1;
+
+  --text: #16181d;
+  --muted: #59616d;
+
+  --accent: #5b3fd9;
+  --accent-solid: #5b3fd9;
+  --accent-solid-hover: #6a4fe6;
+  --accent-solid-active: #4b32bd;
+  --accent-ink: #ffffff;
+  --accent-text: #4c33bf;
+  --accent-wash: rgb(91 63 217 / 0.1);
+
+  --amber: #9a6511;
+  --amber-wash: rgb(154 101 17 / 0.12);
+  --emerald: #117a55;
+  --emerald-wash: rgb(17 122 85 / 0.12);
+  --rose: #c0304d;
+  --rose-wash: rgb(192 48 77 / 0.1);
+
+  --grid-line: rgb(22 24 29 / 0.05);
+}
