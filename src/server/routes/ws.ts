@@ -29,6 +29,10 @@ export async function registerWsRoute(app: FastifyInstance, opts: WsRouteOptions
   await app.register(fastifyWebsocket);
 
   app.get('/ws', {websocket: true}, (socket, req) => {
+    // Session presence alone is the auth check here (no `requireUser`-style lookup of the
+    // user row) — that's only safe because `sessions.user_id` has an `onDelete: 'cascade'`
+    // FK, so a session can never outlive its user. If that FK is ever relaxed, this check
+    // must be upgraded to look the user up, like `requireUser` does.
     const userId = req.session.userId;
     if (!userId) {
       socket.close(4401, 'unauthorized');

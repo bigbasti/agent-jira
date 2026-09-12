@@ -104,7 +104,10 @@ export class EventHub {
   }
 
   /** Number of active subscribers for `userId` — exposed so tests can verify a socket's
-   * subscription is actually removed on unsubscribe/close, not just externally silent. */
+   * subscription is actually removed on unsubscribe/close, not just externally silent.
+   * Test-only introspection; not used by production code. Includes temporary `waitFor`
+   * subscribers (each `waitFor` call subscribes for the duration of its wait), not just
+   * long-lived ones like websocket connections. */
   subscriberCount(userId: string): number {
     return this.subscribers.get(userId)?.size ?? 0;
   }

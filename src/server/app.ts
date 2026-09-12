@@ -3,6 +3,7 @@ import type {Database} from './db/index.js';
 import {loadConfig, type AppConfig} from './config.js';
 import {registerSessionPlugin} from './plugins/session.js';
 import {authRoutes} from './routes/auth.js';
+import {projectRoutes} from './routes/projects.js';
 import {registerWsRoute, type WsRouteOptions} from './routes/ws.js';
 import {EventHub} from './events/hub.js';
 import {warmDummyHash} from './services/auth.js';
@@ -38,6 +39,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   await registerSessionPlugin(app, config);
   await app.register(authRoutes);
+  await app.register(projectRoutes);
   await registerWsRoute(app, {wsHeartbeatIntervalMs: opts.wsHeartbeatIntervalMs});
 
   app.get('/api/health', async () => {
