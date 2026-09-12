@@ -1,28 +1,16 @@
-import {mkdirSync} from 'node:fs';
-import {dirname} from 'node:path';
-import SqliteDatabase from 'better-sqlite3';
-import {drizzle} from 'drizzle-orm/better-sqlite3';
-import {migrate} from 'drizzle-orm/better-sqlite3/migrator';
+import {openDb} from './db/index.js';
+import {runMigrations} from './db/migrate.js';
 import {buildApp} from './app.js';
 import {loadConfig} from './config.js';
 
 const config = loadConfig();
-
-if (config.databasePath !== ':memory:') {
-  mkdirSync(dirname(config.databasePath), {recursive: true});
-}
-
-const sqlite = new SqliteDatabase(config.databasePath);
-const db = drizzle(sqlite);
+const db = openDb(config.databasePath);
 
 try {
-  migrate(db, {migrationsFolder: './drizzle'});
+  runMigrations(db);
 } catch (err) {
-  // No migrations directory yet — the real schema and migrations land in Task 2.
-  const isMissingFolder = err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT';
-  if (!isMissingFolder) {
-    throw err;
-  }
+  console.error('Failed to run database migrations:', err);
+  process.exit(1);
 }
 
 const app = await buildApp({db});

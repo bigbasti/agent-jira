@@ -1,5 +1,5 @@
 import Fastify, {type FastifyInstance} from 'fastify';
-import type {Database} from './db/testing.js';
+import type {Database} from './db/index.js';
 
 const VERSION = '0.1.0';
 

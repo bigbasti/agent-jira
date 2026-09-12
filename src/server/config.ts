@@ -10,7 +10,16 @@ const DEV_SESSION_SECRET = 'dev-only-session-secret-do-not-use-in-production!!';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const nodeEnv = env.NODE_ENV ?? 'development';
-  const port = env.PORT ? Number(env.PORT) : 3000;
+
+  let port = 3000;
+  if (env.PORT !== undefined && env.PORT !== '') {
+    const parsedPort = Number(env.PORT);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
+      throw new Error(`PORT must be a positive integer, got: ${JSON.stringify(env.PORT)}`);
+    }
+    port = parsedPort;
+  }
+
   const databasePath = env.DATABASE_PATH ?? './data/agent-jira.db';
 
   let sessionSecret = env.SESSION_SECRET;
