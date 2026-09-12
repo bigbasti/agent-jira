@@ -44,6 +44,28 @@ describe('projects', () => {
     expect(res.json()).toMatchObject({name: 'agent-jira', path: 'C:\\dev\\agent-jira'});
   });
 
+  it('rejects a bare "/" path (no path segment)', async () => {
+    const {cookie} = await h.register();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: {cookie},
+      payload: {name: 'agent-jira', path: '/'},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a path containing a NUL byte', async () => {
+    const {cookie} = await h.register();
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: {cookie},
+      payload: {name: 'agent-jira', path: '/Users/dev/\0evil'},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('rejects an empty name', async () => {
     const {cookie} = await h.register();
     const res = await h.app.inject({
@@ -139,6 +161,20 @@ describe('projects', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({id, name: 'renamed', path: '/Users/dev/git/agent-jira'});
+  });
+
+  it('rejects an empty PATCH body (nothing to update)', async () => {
+    const {cookie} = await h.register();
+    const created = await h.app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers: {cookie},
+      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+    });
+    const {id} = created.json();
+
+    const res = await h.app.inject({method: 'PATCH', url: `/api/projects/${id}`, headers: {cookie}, payload: {}});
+    expect(res.statusCode).toBe(400);
   });
 
   it('409s when deleting a project that still has stories', async () => {
