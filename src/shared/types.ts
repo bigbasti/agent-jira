@@ -65,6 +65,7 @@ export interface Agent {
 export interface BoardSnapshot {
   columns: Status[];
   stories: Story[];
+  projects: Project[];
   agents: Agent[];
 }
 
