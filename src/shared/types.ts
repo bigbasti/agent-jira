@@ -1,5 +1,11 @@
 import type {Status} from './status.js';
 
+export interface User {
+  id: string;
+  email: string;
+  createdAt: number;
+}
+
 export interface Project {
   id: string;
   userId: string;
