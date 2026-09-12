@@ -43,8 +43,6 @@
 
   /* The 4px drafting grid drawn behind the sign-in screen. */
   --grid-line: rgb(230 232 236 / 0.055);
-
-  --ease-console: cubic-bezier(0.2, 0.6, 0.2, 1);
 }
 
 :root[data-theme='light'] {
@@ -68,12 +66,16 @@
   --accent-text: #4c33bf;
   --accent-wash: rgb(91 63 217 / 0.1);
 
-  --amber: #9a6511;
-  --amber-wash: rgb(154 101 17 / 0.12);
-  --emerald: #117a55;
-  --emerald-wash: rgb(17 122 85 / 0.12);
-  --rose: #c0304d;
-  --rose-wash: rgb(192 48 77 / 0.1);
+  /*
+   * Dark enough to clear 4.5:1 against their own wash on every light surface the chip can
+   * land on — the canvas is the worst case, not the panel. Ratios in the task report.
+   */
+  --amber: #83550b;
+  --amber-wash: rgb(131 85 11 / 0.12);
+  --emerald: #0e6b4a;
+  --emerald-wash: rgb(14 107 74 / 0.12);
+  --rose: #b02a46;
+  --rose-wash: rgb(176 42 70 / 0.1);
 
   --grid-line: rgb(22 24 29 / 0.05);
 }

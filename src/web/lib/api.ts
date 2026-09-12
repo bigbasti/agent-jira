@@ -33,10 +33,16 @@ const FALLBACK_MESSAGE = 'Something went wrong. Try again.';
 
 interface ErrorBody {
   error?: unknown;
-  /** Human-readable detail the server supplies for refused transitions. */
   message?: unknown;
   reason?: unknown;
 }
+
+/**
+ * Codes whose `message`/`reason` is a sentence written for a person — a refused
+ * transition names the rule that stopped it. Every other code's detail is machine text
+ * (`invalid_request` carries raw validator output), so those use the table below.
+ */
+const CODES_WITH_HUMAN_REASON = new Set(['transition_refused']);
 
 function firstSentence(...candidates: unknown[]): string | undefined {
   for (const candidate of candidates) {
@@ -48,9 +54,10 @@ function firstSentence(...candidates: unknown[]): string | undefined {
 function toApiError(status: number, payload: unknown): ApiError {
   const body = (typeof payload === 'object' && payload !== null ? payload : {}) as ErrorBody;
   const code = typeof body.error === 'string' ? body.error : 'unknown';
-  // A reason written by the server beats our table: it names the specific rule that
-  // refused the request.
-  const message = firstSentence(body.message, body.reason, MESSAGES[code]) ?? FALLBACK_MESSAGE;
+  const serverReason = CODES_WITH_HUMAN_REASON.has(code)
+    ? firstSentence(body.message, body.reason)
+    : undefined;
+  const message = serverReason ?? MESSAGES[code] ?? FALLBACK_MESSAGE;
   return new ApiError(status, code, message);
 }
 

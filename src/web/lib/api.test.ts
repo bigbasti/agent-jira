@@ -46,6 +46,17 @@ describe('api', () => {
     expect(err.message).toBe('Cannot move a story from draft to accepted.');
   });
 
+  it('ignores a server message on codes that carry machine text', async () => {
+    const fetchMock = mockFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse(400, {error: 'invalid_request', message: 'Invalid input: expected string at "email"'}),
+    );
+
+    const err = (await api.post('/api/stories', {}).catch((e: unknown) => e)) as ApiError;
+
+    expect(err.message).toBe('Some of those details are not valid. Check the form and try again.');
+  });
+
   it('falls back to a readable message for an unrecognised code', async () => {
     const fetchMock = mockFetch();
     fetchMock.mockResolvedValue(jsonResponse(500, {error: 'kaboom_internal'}));

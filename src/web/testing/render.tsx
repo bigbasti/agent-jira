@@ -24,16 +24,13 @@ export function renderWithClient(ui: ReactElement, client = createTestQueryClien
   return {client, ...render(ui, {wrapper})};
 }
 
-/** Minimal stand-in for the parts of `Response` the api client touches. */
+/** A real `Response`, so the api client meets the same object the browser hands it. */
 export function jsonResponse(status: number, body?: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  if (body === undefined) return new Response(null, {status});
+  return new Response(JSON.stringify(body), {
     status,
-    json: async () => {
-      if (body === undefined) throw new SyntaxError('no body');
-      return body;
-    },
-  } as Response;
+    headers: {'Content-Type': 'application/json'},
+  });
 }
 
 /** Installs a `fetch` spy on globalThis and returns it. */

@@ -47,6 +47,25 @@ describe('AuthScreen', () => {
     expect(screen.getByLabelText('Password')).toHaveAccessibleDescription('At least 12 characters.');
   });
 
+  it('marks the field that failed validation and moves focus to it', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockFetch();
+    renderWithClient(<AuthScreen />);
+
+    await user.click(screen.getByRole('tab', {name: 'Create account'}));
+    await fillCredentials(user, 'tooshort');
+    await user.click(screen.getByRole('button', {name: 'Create account'}));
+
+    const passwordField = screen.getByLabelText('Password');
+    expect(passwordField).toHaveAttribute('aria-invalid', 'true');
+    expect(passwordField).toHaveAccessibleDescription(
+      'At least 12 characters. Passwords need at least 12 characters.',
+    );
+    expect(passwordField).toHaveFocus();
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('shows a server error message', async () => {
     const user = userEvent.setup();
     const fetchMock = mockFetch();

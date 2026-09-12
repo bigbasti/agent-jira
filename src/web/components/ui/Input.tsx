@@ -1,7 +1,7 @@
 import clsx from 'clsx';
-import {useId, type InputHTMLAttributes} from 'react';
+import {useId, type ComponentPropsWithRef} from 'react';
 
-export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id'> {
+export interface InputProps extends Omit<ComponentPropsWithRef<'input'>, 'id'> {
   label: string;
   /** Stated up front, not as a punishment after a failed submit. */
   hint?: string;

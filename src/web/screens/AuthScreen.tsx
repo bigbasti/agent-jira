@@ -16,12 +16,18 @@ const MODES: {id: Mode; label: string; pendingLabel: string}[] = [
 
 const MIN_PASSWORD_LENGTH = 12;
 
+type Field = 'email' | 'password';
+
 export function AuthScreen() {
   const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<{field: Field; message: string} | null>(null);
   const tablist = useRef<HTMLDivElement>(null);
+  const fields = {
+    email: useRef<HTMLInputElement>(null),
+    password: useRef<HTMLInputElement>(null),
+  };
 
   const headingId = useId();
   const formId = useId();
@@ -31,20 +37,26 @@ export function AuthScreen() {
   const active = mode === 'signin' ? login : register;
   const copy = MODES.find(entry => entry.id === mode) ?? MODES[0]!;
 
+  // The server's refusal is about the pair of credentials, not one field, so it belongs
+  // in the form-level alert. What we can pin to a field is reported on that field.
   const serverError =
     active.error instanceof ApiError
       ? active.error.message
       : active.error
         ? 'Something went wrong. Try again.'
         : null;
-  const message = formError ?? serverError;
 
   function switchMode(next: Mode) {
     if (next === mode) return;
     setMode(next);
-    setFormError(null);
+    setFieldError(null);
     login.reset();
     register.reset();
+  }
+
+  function reject(field: Field, message: string) {
+    setFieldError({field, message});
+    fields[field].current?.focus();
   }
 
   function onTablistKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -66,18 +78,21 @@ export function AuthScreen() {
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // One request at a time, stated here rather than left to the disabled button.
+    if (active.isPending) return;
+
     const address = email.trim();
 
     if (!address.includes('@')) {
-      setFormError('Enter the email address for your account.');
+      reject('email', 'Enter the email address for your account.');
       return;
     }
     if (mode === 'register' && password.length < MIN_PASSWORD_LENGTH) {
-      setFormError(`Passwords need at least ${MIN_PASSWORD_LENGTH} characters.`);
+      reject('password', `Passwords need at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
 
-    setFormError(null);
+    setFieldError(null);
     active.mutate({email: address, password});
   }
 
@@ -139,30 +154,34 @@ export function AuthScreen() {
             className="mt-5 flex flex-col gap-4"
           >
             <Input
+              ref={fields.email}
               label="Email"
               type="email"
               autoComplete="email"
               autoFocus
               spellCheck={false}
+              error={fieldError?.field === 'email' ? fieldError.message : undefined}
               value={email}
               onChange={event => setEmail(event.target.value)}
             />
             <Input
+              ref={fields.password}
               label="Password"
               type="password"
               autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
               // The rule is on screen before the first keystroke, not after a rejection.
               hint={mode === 'register' ? `At least ${MIN_PASSWORD_LENGTH} characters.` : undefined}
+              error={fieldError?.field === 'password' ? fieldError.message : undefined}
               value={password}
               onChange={event => setPassword(event.target.value)}
             />
 
-            {message && (
+            {serverError && (
               <p
                 role="alert"
                 className="rounded-well border border-rose/35 bg-rose-wash px-3 py-2 text-label text-rose"
               >
-                {message}
+                {serverError}
               </p>
             )}
 
