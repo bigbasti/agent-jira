@@ -1,4 +1,5 @@
 import {render, screen, within} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
 import {Board, planMove} from './Board.js';
 import type {StoryActions} from './StoryCard.js';
@@ -15,17 +16,18 @@ function noopActions(): StoryActions {
 
 function renderBoard(stories: Story[], overrides: Partial<Parameters<typeof Board>[0]> = {}) {
   const onMove = vi.fn();
+  const actions = overrides.actions ?? noopActions();
   render(
     <Board
       stories={stories}
       projects={[makeProject({id: 'p1', name: 'agent-jira'})]}
       agents={[makeAgent({id: 'a1', name: 'claude-code-1'})]}
-      actions={noopActions()}
       onMove={onMove}
       {...overrides}
+      actions={actions}
     />,
   );
-  return {onMove};
+  return {onMove, actions};
 }
 
 /** The `<section>` a column renders, addressed by its heading. */
@@ -126,6 +128,20 @@ describe('Board', () => {
     const title = screen.getByRole('button', {name: 'Queued one'});
     expect(title).toHaveAttribute('aria-roledescription', 'story card');
     expect(title).toHaveAttribute('tabindex', '0');
+  });
+
+  // Through Board, a card's <li> carries the sortable drag activator's onPointerDown —
+  // StoryCard rendered on its own (see StoryCard.test.tsx) never wires that up, so this is
+  // the only place a click on an action button is exercised against the real listener a
+  // pointer-based drag would also fire on.
+  it('does not open the story when an action button is clicked on a sortable card', async () => {
+    const user = userEvent.setup();
+    const {actions} = renderBoard([makeStory({id: 's1', title: 'Draft one', status: 'draft'})]);
+
+    await user.click(screen.getByRole('button', {name: 'Edit Draft one'}));
+
+    expect(actions.onEdit).toHaveBeenCalledWith(expect.objectContaining({id: 's1'}));
+    expect(actions.onOpen).not.toHaveBeenCalled();
   });
 });
 

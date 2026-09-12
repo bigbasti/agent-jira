@@ -150,6 +150,81 @@ describe('useMoveStory', () => {
     expect(storyIn(client, 'd1').rank).toBe('A');
   });
 
+  it('reverts the rank, not just the status, when a rank-changing move is refused', async () => {
+    // Unlike the empty-column case above, dropping between two named neighbours gives
+    // `optimisticRank` a real range to pick a midpoint from — this is the case a rollback
+    // that only reset `status` would miss. The move response is held open (as the other
+    // rank-asserting tests above do) so the optimistic value is there to observe before it
+    // resolves.
+    const answer = deferred<Response>();
+    routeFetch(() => answer.promise);
+    const {result, client} = renderBoardHooks();
+    await waitFor(() => expect(result.current.board.isSuccess).toBe(true));
+
+    result.current.move.mutate({storyId: 'd1', status: 'todo', beforeId: 't1', afterId: 't2'});
+
+    await waitFor(() => expect(storyIn(client, 'd1').status).toBe('todo'));
+    const optimisticRank = storyIn(client, 'd1').rank;
+    expect(optimisticRank > 'A').toBe(true);
+    expect(optimisticRank < 'B').toBe(true);
+
+    answer.resolve(jsonResponse(409, {error: 'transition_refused', message: 'Not allowed.'}));
+    await waitFor(() => expect(result.current.move.isError).toBe(true));
+    expect(storyIn(client, 'd1').status).toBe('draft');
+    expect(storyIn(client, 'd1').rank).toBe('A');
+  });
+
+  it("does not let one refused move roll back a second, still-optimistic move's position", async () => {
+    // Two overlapping drags land on different stories. The first (d1 into todo) is
+    // refused; the second (t1 reordering within todo) is still in flight. A rollback that
+    // restores the whole snapshot — rather than just the story it moved — would stomp t1's
+    // optimistic rank with a copy of the board that predates it.
+    const firstAnswer = deferred<Response>();
+    const secondAnswer = deferred<Response>();
+    // Every board GET after the first is a settle-triggered refetch. Held open here, so
+    // the assertions below observe the rollback itself rather than a refetch racing ahead
+    // of it — in production that refetch reads the server's authoritative state, but this
+    // test's server-double would otherwise just echo back the original, pre-move `BOARD`.
+    const boardRefetches: Array<(response: Response) => void> = [];
+    let boardCalls = 0;
+    const fetchMock = mockFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/board') {
+        boardCalls += 1;
+        if (boardCalls === 1) return jsonResponse(200, BOARD);
+        const refetch = deferred<Response>();
+        boardRefetches.push(refetch.resolve);
+        return refetch.promise;
+      }
+      if (path === '/api/stories/d1/move') return firstAnswer.promise;
+      if (path === '/api/stories/t1/move') return secondAnswer.promise;
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    const {result, client} = renderBoardHooks();
+    await waitFor(() => expect(result.current.board.isSuccess).toBe(true));
+
+    result.current.move.mutate({storyId: 'd1', status: 'todo', beforeId: 't1', afterId: 't2'});
+    await waitFor(() => expect(storyIn(client, 'd1').status).toBe('todo'));
+
+    result.current.move.mutate({storyId: 't1', status: 'todo', beforeId: 't2', afterId: null});
+    await waitFor(() => expect(storyIn(client, 't1').rank > 'B').toBe(true));
+    const t1OptimisticRank = storyIn(client, 't1').rank;
+
+    firstAnswer.resolve(jsonResponse(409, {error: 'transition_refused', message: 'Not allowed.'}));
+    await waitFor(() => expect(storyIn(client, 'd1').status).toBe('draft'));
+    expect(storyIn(client, 'd1').rank).toBe('A');
+
+    // t1's optimistic move survived d1's rollback untouched.
+    expect(storyIn(client, 't1').status).toBe('todo');
+    expect(storyIn(client, 't1').rank).toBe(t1OptimisticRank);
+
+    // Let everything settle so nothing is left dangling.
+    boardRefetches.forEach(resolve => resolve(jsonResponse(200, BOARD)));
+    secondAnswer.resolve(jsonResponse(200, makeStory({id: 't1', status: 'todo'})));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/stories/t1/move', expect.anything()));
+  });
+
   it('refetches the board once the move settles, so other cards pick up the change', async () => {
     const fetchMock = routeFetch(async () => jsonResponse(200, makeStory({id: 'd1', status: 'todo'})));
     const {result} = renderBoardHooks();

@@ -73,26 +73,49 @@ function applyMove(board: BoardSnapshot, move: MoveRequest): BoardSnapshot {
   };
 }
 
+/** What a refused move needs to put back — nothing more, so nothing else is disturbed. */
+interface MoveRollback {
+  storyId: string;
+  status: Status;
+  rank: string;
+}
+
 /**
- * Optimistic: the card lands in its new column on the frame the drag ends. A refusal
- * rolls the whole snapshot back and leaves the server's reason on `error.message`, which
- * is the sentence the board puts in its toast.
+ * Optimistic: the card lands in its new column on the frame the drag ends. A refusal rolls
+ * back only the moved story's `status`/`rank`, leaving the rest of the cache — including
+ * whatever a second, still-in-flight drag (or, from Task 11, a WebSocket event) has since
+ * written — untouched. Rolling back the whole snapshot instead would clobber that
+ * concurrent write with a copy of the board that predates it.
+ *
+ * The reason a refusal failed lands on `error.message`, which is the sentence the board
+ * puts in its toast.
  */
 export function useMoveStory() {
   const client = useQueryClient();
 
-  return useMutation<Story, ApiError, MoveRequest, {previous: BoardSnapshot | undefined}>({
+  return useMutation<Story, ApiError, MoveRequest, MoveRollback | undefined>({
     mutationFn: ({storyId, status, beforeId, afterId}) =>
       api.post<Story>(`/api/stories/${encodeURIComponent(storyId)}/move`, {status, beforeId, afterId}),
     onMutate: async move => {
       // Stop an in-flight board load from landing on top of the patch we are about to make.
       await client.cancelQueries({queryKey: BOARD_KEY});
-      const previous = client.getQueryData<BoardSnapshot>(BOARD_KEY);
-      if (previous) client.setQueryData(BOARD_KEY, applyMove(previous, move));
-      return {previous};
+      const board = client.getQueryData<BoardSnapshot>(BOARD_KEY);
+      const story = board?.stories.find(candidate => candidate.id === move.storyId);
+      if (board) client.setQueryData(BOARD_KEY, applyMove(board, move));
+      return story && {storyId: story.id, status: story.status, rank: story.rank};
     },
-    onError: (_error, _move, context) => {
-      if (context?.previous) client.setQueryData(BOARD_KEY, context.previous);
+    onError: (_error, _move, rollback) => {
+      if (!rollback) return;
+      client.setQueryData<BoardSnapshot>(BOARD_KEY, board =>
+        board
+          ? {
+              ...board,
+              stories: board.stories.map(story =>
+                story.id === rollback.storyId ? {...story, status: rollback.status, rank: rollback.rank} : story,
+              ),
+            }
+          : board,
+      );
     },
     // A move can change what blocks other stories, so the whole snapshot is refetched
     // rather than only the story the server echoed back.
