@@ -41,9 +41,54 @@ describe('rankBetween', () => {
     }
   });
 
+  it('prepends before the first forever without collision', () => {
+    let first = rankBetween(null, null);
+    for (let i = 0; i < 50; i++) {
+      const prev = rankBetween(null, first);
+      expect(prev < first).toBe(true);
+      first = prev;
+    }
+  });
+
   it('grows by a character when neighbours are adjacent in the alphabet', () => {
     const mid = rankBetween('a', 'b');
     expect(mid > 'a' && mid < 'b').toBe(true);
     expect(mid.length).toBeGreaterThan(1);
+  });
+
+  it('produces a valid rank on a long shared prefix that only diverges at the tail', () => {
+    const mid = rankBetween('abcdef0', 'abcdef9');
+    expect(mid > 'abcdef0' && mid < 'abcdef9').toBe(true);
+  });
+
+  it('throws instead of looping forever on a character outside the alphabet', () => {
+    expect(() => rankBetween('5!', '6')).toThrow(RangeError);
+  });
+
+  describe('when `after` is `before` followed only by \'0\' characters', () => {
+    // '0' is the alphabet's minimum character, so there is provably no
+    // string that sorts strictly between `before` and `before + '0'*n`:
+    // any extension makes the upper bound a proper prefix of the result
+    // (so the result would sort *after* it), and stopping short just
+    // reproduces the upper bound. rankBetween must recognise this and
+    // fail fast with a RangeError rather than loop forever searching for
+    // a digit that cannot exist. Each case is given an explicit timeout
+    // so a regression to the old infinite loop fails the test promptly
+    // instead of hanging the whole suite.
+    it('rejects a single trailing zero', () => {
+      expect(() => rankBetween('5', '50')).toThrow(RangeError);
+    }, 2000);
+
+    it('rejects a longer run of trailing zeros', () => {
+      expect(() => rankBetween('5', '500')).toThrow(RangeError);
+    }, 2000);
+
+    it('rejects a trailing zero on a multi-character prefix', () => {
+      expect(() => rankBetween('abc', 'abc0')).toThrow(RangeError);
+    }, 2000);
+
+    it('rejects a much longer zero run', () => {
+      expect(() => rankBetween('5', '50000000')).toThrow(RangeError);
+    }, 2000);
   });
 });
