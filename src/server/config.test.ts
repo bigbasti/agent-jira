@@ -61,5 +61,14 @@ describe('loadConfig', () => {
     it('throws a clear error when PORT is not an integer', () => {
       expect(() => loadConfig({...baseEnv(), PORT: '3000.5'})).toThrow(/PORT/);
     });
+
+    it('throws a clear error when PORT is above 65535', () => {
+      expect(() => loadConfig({...baseEnv(), PORT: '65536'})).toThrow(/PORT/);
+    });
+
+    it('accepts the boundary value PORT=65535', () => {
+      const config = loadConfig({...baseEnv(), PORT: '65535'});
+      expect(config.port).toBe(65535);
+    });
   });
 });

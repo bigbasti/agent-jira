@@ -14,8 +14,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   let port = 3000;
   if (env.PORT !== undefined && env.PORT !== '') {
     const parsedPort = Number(env.PORT);
-    if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
-      throw new Error(`PORT must be a positive integer, got: ${JSON.stringify(env.PORT)}`);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      throw new Error(`PORT must be a positive integer between 1 and 65535, got: ${JSON.stringify(env.PORT)}`);
     }
     port = parsedPort;
   }

@@ -1,5 +1,7 @@
 import {describe, it, expect} from 'vitest';
 import {createTestDb} from './testing.js';
+import {openDb} from './index.js';
+import {runMigrations} from './migrate.js';
 import {users, projects, stories, storyDependencies, storyUpdates} from './schema.js';
 import {eq, or} from 'drizzle-orm';
 
@@ -48,8 +50,26 @@ describe('migrations', () => {
     expect(remainingUpdates).toHaveLength(0);
   });
 
-  it('is idempotent', () => {
-    createTestDb();
-    expect(() => createTestDb()).not.toThrow();
+  it('is idempotent: reapplying migrations to an already-migrated db is a no-op', () => {
+    // Mirrors production (src/server/index.ts calls runMigrations(db) against the same
+    // persistent file-backed db on every restart) — so this must run migrate() twice
+    // against the SAME db handle, not build two independent databases.
+    const db = openDb(':memory:');
+    runMigrations(db);
+
+    db.insert(users).values({id: 'u1', email: 'idempotent@b.c', passwordHash: 'x', createdAt: 1}).run();
+    const before = db.select().from(users).all();
+    expect(before).toHaveLength(1);
+
+    expect(() => runMigrations(db)).not.toThrow();
+
+    // If migrations were re-applied destructively (e.g. tables dropped and recreated,
+    // or statements reissued without the applied-migrations guard), this row would
+    // either vanish or the second run would throw on a duplicate-table/duplicate-PK
+    // conflict. Neither happens: drizzle's migrator tracks applied migrations and
+    // skips them on the second call.
+    const after = db.select().from(users).all();
+    expect(after).toHaveLength(1);
+    expect(after).toEqual(before);
   });
 });

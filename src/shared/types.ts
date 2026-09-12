@@ -19,7 +19,7 @@ export interface Story {
   status: Status;
   rank: string;
   progressPct: number;
-  progressLabel: string | null;
+  progressLabel: string;
   claimedByAgentId: string | null;
   stopRequested: boolean;
   playRequestedAt: number | null;
