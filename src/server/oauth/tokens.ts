@@ -81,6 +81,12 @@ export function issueTokens(db: Database, {clientId, userId, agentId}: IssueToke
  * it: both are stamped at the same instant, so `issuedAt = expiresAt - ACCESS_TTL`. Each
  * rotation writes a new row and therefore restarts the 90 days — a sliding window, which
  * is what a long-lived agent session wants.
+ *
+ * INVARIANT: this arithmetic is only correct while `expires_at` means "issued at plus
+ * exactly `ACCESS_TOKEN_TTL_MS`". Two things would silently shorten or extend every
+ * refresh lifetime — changing `ACCESS_TOKEN_TTL_MS` (old rows were stamped under the old
+ * value), and updating `expires_at` in place instead of issuing a new row. Do neither; if
+ * either becomes necessary, give `oauth_tokens` its own refresh-expiry column first.
  */
 export function refreshExpiresAt(row: {expiresAt: number}): number {
   return row.expiresAt - ACCESS_TOKEN_TTL_MS + REFRESH_TOKEN_TTL_MS;

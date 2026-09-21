@@ -203,6 +203,47 @@ describe('oauth client registration', () => {
     }
   });
 
+  it('rejects a redirect uri whose raw text differs from where it actually resolves', async () => {
+    // `new URL()` silently strips tab/CR/LF, so the string a human reads on the consent
+    // screen is not the host the code is sent to: rendered as HTML the tab below collapses
+    // to a space and `good.example.com` reads as the destination, while the request
+    // resolves to `good.example.com.evil.example.com`.
+    for (const uri of [
+      'https://good.example.com\t.evil.example.com/cb',
+      'https://good.example.com\r.evil.example.com/cb',
+      'https://good.example.com\n.evil.example.com/cb',
+      'https://good.example.com .evil.example.com/cb',
+      'http://127.0.0.1\t.evil.example.com/cb',
+      '\thttps://app.example.com/cb',
+      'https://app.example.com/cb\n',
+    ]) {
+      const res = await registerClient(h, {redirect_uris: [uri]});
+      expect(res.statusCode, JSON.stringify(uri)).toBe(400);
+      expect(res.json().error).toBe('invalid_redirect_uri');
+    }
+  });
+
+  it('rejects a redirect uri that is not already in its resolved form', async () => {
+    // Anything the URL parser would rewrite is refused, so the string stored, matched on
+    // and displayed is always byte-for-byte the one `buildRedirect` sends the code to.
+    for (const uri of ['https://app.example.com:443/cb', 'https://APP.example.com/cb', 'https://app.example.com/a/../cb']) {
+      const res = await registerClient(h, {redirect_uris: [uri]});
+      expect(res.statusCode, uri).toBe(400);
+    }
+  });
+
+  it('still accepts a legitimate redirect uri with a port and a query string', async () => {
+    for (const uri of [
+      'http://127.0.0.1:41234/callback',
+      'http://localhost:8080/oauth/callback?source=cli',
+      'https://app.example.com:8443/cb?tenant=acme&v=2',
+    ]) {
+      const res = await registerClient(h, {redirect_uris: [uri]});
+      expect(res.statusCode, uri).toBe(201);
+      expect(res.json().redirect_uris).toEqual([uri]);
+    }
+  });
+
   it('rejects a redirect uri carrying a fragment or embedded credentials', async () => {
     for (const uri of ['https://app.example.com/cb#frag', 'https://user:pw@app.example.com/cb']) {
       const res = await registerClient(h, {redirect_uris: [uri]});
@@ -541,6 +582,28 @@ describe('oauth consent', () => {
     expect(h.db.select().from(agents).all()).toHaveLength(0);
   });
 
+  it('refuses a consent decision whose origin is the opaque null', async () => {
+    const {cookie} = await h.register();
+    const client = (await registerClient(h)).json();
+
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/oauth/authorize',
+      // What a sandboxed iframe sends. It is not this origin, so it is not trusted.
+      headers: {cookie, origin: 'null', host: 'localhost:3000'},
+      payload: {
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: REDIRECT,
+        code_challenge: CHALLENGE,
+        code_challenge_method: 'S256',
+        decision: 'allow',
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(h.db.select().from(oauthCodes).all()).toHaveLength(0);
+  });
+
   it('accepts a consent decision that names this origin', async () => {
     const {cookie} = await h.register();
     const client = (await registerClient(h)).json();
@@ -709,6 +772,20 @@ describe('oauth token exchange', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({error: 'invalid_grant', error_description: expect.any(String)});
+  });
+
+  it('does not echo an attacker-supplied parameter name back in the error', async () => {
+    const long = 'x'.repeat(5000);
+    const res = await h.app.inject({
+      method: 'POST',
+      url: '/oauth/token',
+      headers: FORM,
+      payload: `grant_type=authorization_code&${long}=1&${long}=2`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('invalid_request');
+    expect(res.body).not.toContain(long);
+    expect(res.body.length).toBeLessThan(500);
   });
 
   it('refuses a token request with a repeated parameter', async () => {

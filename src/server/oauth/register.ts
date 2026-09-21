@@ -28,6 +28,9 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 /** Zero-width and bidirectional-override characters: pure text-spoofing machinery. */
 const INVISIBLE_CHARS = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
+/** Every character the URL parser strips or refuses to carry, plus the plain space. */
+const URI_WHITESPACE = /[\u0000-\u0020\u007f]/;
+
 /**
  * Makes an untrusted name safe to show a human.
  *
@@ -61,10 +64,22 @@ export function sanitiseClientName(raw: unknown): string {
  * credentials are refused outright: OAuth forbids a fragment on a redirect uri, and
  * `https://real.example.com@evil.example.com` is a classic way to make a hostile host
  * read as a friendly one.
+ *
+ * The other half of the job is that the *string* must be the destination. A redirect uri
+ * is stored raw, matched raw, and shown raw to the human on the consent screen, while the
+ * code is sent to whatever `new URL()` resolves it to — so any divergence between the two
+ * is a lie told to the person making the decision. `new URL()` silently strips tabs and
+ * newlines, which makes `https://good.example.com\t.evil.example.com/cb` read on screen as
+ * `https://good.example.com .evil.example.com/cb` (HTML collapses the tab) while resolving
+ * to the attacker's host. Rather than enumerate the parser's rewrites, the uri must
+ * survive a round trip unchanged: what is displayed is then exactly what is sent.
  */
 export function isAllowedRedirectUri(raw: unknown): raw is string {
   if (typeof raw !== 'string') return false;
   if (raw === '' || raw.length > MAX_REDIRECT_URI_LENGTH) return false;
+  // Named explicitly because it is the spoofing case, and because a uri with whitespace in
+  // it is never legitimate regardless of what the parser makes of it.
+  if (URI_WHITESPACE.test(raw)) return false;
 
   let url: URL;
   try {
@@ -72,6 +87,9 @@ export function isAllowedRedirectUri(raw: unknown): raw is string {
   } catch {
     return false;
   }
+
+  // The invariant: stored === matched === displayed === where the code goes.
+  if (url.toString() !== raw) return false;
 
   if (url.hash !== '' || raw.includes('#')) return false;
   if (url.username !== '' || url.password !== '') return false;
@@ -112,7 +130,7 @@ export function registerClient(db: Database, body: unknown): RegisteredClient {
     if (!isAllowedRedirectUri(uri)) {
       throw new OAuthError(
         'invalid_redirect_uri',
-        'Redirect URIs must be https, or http on localhost or 127.0.0.1, with no fragment.',
+        'Redirect URIs must be https, or http on localhost or 127.0.0.1, with no fragment, no whitespace, and already in resolved form.',
       );
     }
   }

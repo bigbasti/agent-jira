@@ -38,6 +38,9 @@ const REGISTER_RATE_LIMIT = {max: 10, timeWindow: '1 hour'};
 /** Enough headroom for a real client's retries, low enough to make guessing pointless. */
 const TOKEN_RATE_LIMIT = {max: 60, timeWindow: '1 minute'};
 
+/** Static: the offending parameter name comes from the request and is never echoed. */
+const DUPLICATE_PARAMETER_ERROR = 'Each request parameter must be given exactly once.';
+
 /**
  * Refuses a request whose `Origin` names somewhere other than this server.
  *
@@ -47,10 +50,14 @@ const TOKEN_RATE_LIMIT = {max: 60, timeWindow: '1 minute'};
  * either omits the header or sends this host, and a non-browser caller (which has no
  * cookie to ride on anyway) sends nothing. Compared against `Host` rather than
  * `publicUrl` so it still holds when a proxy or a dev server fronts the app.
+ *
+ * The literal string `null` is the opaque origin a sandboxed iframe sends, and it is
+ * refused: it is emphatically not this host, and treating it as same-origin would be the
+ * one soft spot in a stack that is otherwise parser scoping plus SameSite=Lax.
  */
 async function requireSameOrigin(req: FastifyRequest, reply: FastifyReply) {
   const origin = req.headers.origin;
-  if (origin === undefined || origin === 'null') return;
+  if (origin === undefined) return;
 
   let originHost: string;
   try {
@@ -200,7 +207,8 @@ export async function oauthRoutes(app: FastifyInstance, opts: OAuthRouteOptions)
           // A repeated parameter is refused, not reduced: OAuth forbids it, and reducing
           // it is how a second `code_verifier` slips past a validator.
           if (values.length !== 1) {
-            done(new OAuthError('invalid_request', `The ${key} parameter must be given exactly once.`), undefined);
+            // The key is attacker-supplied and unbounded, so it is counted, not quoted.
+            done(new OAuthError('invalid_request', DUPLICATE_PARAMETER_ERROR), undefined);
             return;
           }
           parsed[key] = values[0]!;
