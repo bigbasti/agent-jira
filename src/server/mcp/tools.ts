@@ -122,11 +122,27 @@ async function respond(
  */
 function safeControl(ctx: McpContext, storyId: string | null | undefined): ControlBlock {
   try {
+    liftOfflineAgent(ctx);
     return controlBlock(ctx.db, {...identity(ctx), storyId});
   } catch (err) {
     ctx.log?.error({err}, 'mcp control block could not be built');
     return emptyControl();
   }
+}
+
+/**
+ * Any tool call at all — success or failure, since this runs before the result is built —
+ * is proof the agent is not actually dead. The presence sweep (`markStaleAgentsOffline`)
+ * can mark an agent `offline` purely because it went quiet between two tool calls of one
+ * long story (`post_progress`, say); only `claim_next_story`, `release_story` and
+ * `wait_for_work` ever set a status otherwise, so nothing else brought it back. This is
+ * that return trip: an `offline` agent making a call goes back to whatever its held story
+ * implies, exactly the rule `restoreAgentStatus` applies once a long-poll ends.
+ */
+function liftOfflineAgent(ctx: McpContext): void {
+  const agent = findOwnedAgent(ctx.db, ctx.userId, ctx.agentId);
+  if (agent?.status !== 'offline') return;
+  updateAgent(ctx.db, ctx.hub, identity(ctx), {status: agent.currentStoryId ? 'working' : 'idle'});
 }
 
 function identity(ctx: McpContext): {userId: string; agentId: string} {

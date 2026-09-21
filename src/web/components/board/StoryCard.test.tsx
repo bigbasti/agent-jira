@@ -174,6 +174,26 @@ describe('StoryCard', () => {
     expect(screen.queryByText('Stopping…')).not.toBeInTheDocument();
   });
 
+  it('reads as parked, not "stopping…", once a stopped story is released back to todo', () => {
+    // moveStory's release branch now keeps `stopRequested` (see services/stories.ts) so
+    // Stop actually parks the card instead of being silently discarded. A card sitting in
+    // `todo` is not mid-stop — "Stopping…" would read as broken/stuck — but the human
+    // should still be able to tell at a glance that this card will not be auto-picked up.
+    renderCard(makeStory({id: 's1', title: 'Parked one', status: 'todo', stopRequested: true, playRequestedAt: null}));
+
+    expect(screen.queryByText('Stopping…')).not.toBeInTheDocument();
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+
+    // Play must still work — pressing it is how a human un-parks the card.
+    expect(screen.getByRole('button', {name: 'Start Parked one'})).not.toBeDisabled();
+  });
+
+  it('shows no parked state once the story has been played again', () => {
+    renderCard(makeStory({id: 's1', status: 'todo', stopRequested: false, playRequestedAt: null}));
+
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument();
+  });
+
   it('opens the story when the card title is activated', async () => {
     const user = userEvent.setup();
     const actions = renderCard(makeStory({id: 's1', title: 'Wire the board'}));

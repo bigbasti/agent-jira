@@ -405,6 +405,10 @@ export function isClaimableBy(story: Story, agent: {id: string; autonomous: bool
   if (story.status !== 'todo') return false;
   if (story.blockedBy.length > 0) return false;
   if (story.claimedByAgentId !== null && story.claimedByAgentId !== agent?.id) return false;
+  // A human's Stop is a parked-until-Play instruction, the same for every agent whether or
+  // not it is autonomous: autonomy removes the need for Play, it does not override an
+  // explicit Stop. `requestPlay` clears this flag, so pressing Play un-parks the card again.
+  if (story.stopRequested) return false;
   return story.playRequestedAt !== null || agent?.autonomous === true;
 }
 
@@ -526,10 +530,13 @@ export function updateStory(db: Database, hub: EventHub, userId: string, storyId
  * what takes ownership, and which is refused when another agent already holds the story or
  * when the story is still blocked by an unfinished dependency.
  *
- * Landing in `todo` from another column releases the story: the claim, the stop request and
- * the play request are all cleared. Coming from `finished` or `accepted` that is rework
- * rather than a release, so the progress bar starts over too. A move from `todo` to `todo`
- * is only a reorder of the queue and clears nothing.
+ * Landing in `todo` from another column releases the story: the claim and the play request
+ * are cleared. The stop request is deliberately *not* cleared — Stop means "parked until a
+ * human presses Play", and a release is exactly when that would otherwise let an autonomous
+ * agent re-claim the card on the spot (see `isClaimableBy`); `requestPlay` is what clears it.
+ * Coming from `finished` or `accepted` that is rework rather than a release, so the progress
+ * bar starts over too. A move from `todo` to `todo` is only a reorder of the queue and
+ * clears nothing.
  *
  * More generally, a story that leaves `in_progress`/`in_test` has left the agent's hands —
  * handed over at `finished` as much as given back to `todo` — so the claim is cleared and
@@ -596,7 +603,11 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
       status,
       rank: rankForMove(tx, existing, input, status),
       claimedByAgentId: unclaiming ? null : claimedByAgentId,
-      stopRequested: releasing ? false : existing.stopRequested,
+      // A release must not discard a pending Stop: that is the only thing that makes Stop
+      // actually stop a story an autonomous agent could otherwise re-claim on the spot (see
+      // `isClaimableBy`). Landing in `todo` still clears the *play* request — a stopped card
+      // waits for the human to press Play again, not for the play that got interrupted.
+      stopRequested: existing.stopRequested,
       playRequestedAt: releasing ? null : existing.playRequestedAt,
       progressPct: rework ? 0 : existing.progressPct,
       progressLabel: rework ? '' : existing.progressLabel,

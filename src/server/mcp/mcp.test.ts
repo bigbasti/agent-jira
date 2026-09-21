@@ -8,6 +8,7 @@ import {agents, oauthClients, stories, storyUpdates} from '../db/schema.js';
 import {issueTokens} from '../oauth/tokens.js';
 import {createProject} from '../services/projects.js';
 import {addUpdate, createStory, moveStory, requestPlay, requestStop} from '../services/stories.js';
+import {AGENT_OFFLINE_AFTER_MS, markStaleAgentsOffline} from '../services/agents.js';
 import {clampTimeoutSeconds} from './tools.js';
 import {controlBlock} from './control.js';
 import type {Project, ServerEvent, Story, StoryUpdate} from '../../shared/types.js';
@@ -371,6 +372,34 @@ describe('mcp server', () => {
 
       const waited = await ok<{work: boolean}>(client, 'wait_for_work', {timeoutSeconds: 1});
       expect(waited.work).toBe(false);
+    });
+
+    it('does not let an autonomous agent pick a stopped-and-released story straight back up', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Stop me');
+      const {token} = seedAgent(user.id, {autonomous: true});
+      const client = await connect(token);
+      await claimed(client);
+
+      requestStop(h.db, h.app.hub, user.id, story.id);
+      await ok(client, 'release_story', {storyId: story.id, reason: 'Asked to stop'});
+      expect(storyRow(story.id).status).toBe('todo');
+      expect(storyRow(story.id).stopRequested).toBe(true);
+
+      // Being autonomous removes the need for Play — it does not override an explicit
+      // human Stop. A stopped card is parked until a human presses Play again, same as
+      // for a non-autonomous agent.
+      const again = await ok<{claimed: boolean}>(client, 'claim_next_story');
+      expect(again.claimed).toBe(false);
+
+      const waited = await ok<{work: boolean}>(client, 'wait_for_work', {timeoutSeconds: 1});
+      expect(waited.work).toBe(false);
+
+      // Pressing Play clears the stop and makes the story claimable again, autonomous or not.
+      requestPlay(h.db, h.app.hub, user.id, story.id);
+      const again2 = await ok<{claimed: boolean; story: Story}>(client, 'claim_next_story');
+      expect(again2.claimed).toBe(true);
+      expect(again2.story.id).toBe(story.id);
     });
 
     it('claims a named story when given a storyId', async () => {
@@ -984,6 +1013,41 @@ describe('mcp server', () => {
       // `last_seen_at` is the remark-delivery watermark, not a presence signal — this is
       // the column the offline sweep reads.
       expect(agentRow(agentId).lastActiveAt ?? 0).toBeGreaterThan(Date.now() - 5000);
+    });
+
+    it('comes back from a sweep-induced offline on its next tool call, mid-story', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Still being worked');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+      expect(agentRow(agentId).status).toBe('working');
+
+      // The presence sweep can mark a mid-story agent offline purely because it took a
+      // while between tool calls — nothing about the story changed.
+      markStaleAgentsOffline(h.db, h.app.hub, Date.now() + AGENT_OFFLINE_AFTER_MS + 1);
+      expect(agentRow(agentId).status).toBe('offline');
+      expect(agentRow(agentId).currentStoryId).toBe(story.id);
+
+      // An ordinary tool call mid-story — not claim/release/wait — must still lift it back.
+      await ok(client, 'post_progress', {storyId: story.id, progressPct: 50, label: 'still going'});
+      expect(agentRow(agentId).status).toBe('working');
+    });
+
+    it('leaves a genuinely dead agent offline — nothing calls a tool to lift it', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Abandoned mid-story');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      markStaleAgentsOffline(h.db, h.app.hub, Date.now() + AGENT_OFFLINE_AFTER_MS + 1);
+      expect(agentRow(agentId).status).toBe('offline');
+
+      // Sweeping again without any tool call in between changes nothing.
+      markStaleAgentsOffline(h.db, h.app.hub, Date.now() + 2 * (AGENT_OFFLINE_AFTER_MS + 1));
+      expect(agentRow(agentId).status).toBe('offline');
+      expect(agentRow(agentId).currentStoryId).toBe(story.id);
     });
   });
 

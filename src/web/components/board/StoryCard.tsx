@@ -97,12 +97,19 @@ export function StoryCard({
   const stoppable = story.status === 'in_progress' || story.status === 'in_test';
   const actionCount = editable ? 2 : startable || stoppable ? 1 : 0;
 
-  // The server only clears `playRequestedAt`/`stopRequested` on a release back to `todo`
-  // (see `moveStory` in services/stories.ts) — a claim leaves `playRequestedAt` set, and
-  // finishing leaves `stopRequested` alone. Gating on the column as well as the flag is
-  // what keeps a stale flag from relabelling a card that has already moved on.
+  // The server only clears `playRequestedAt` on a release back to `todo` (see `moveStory`
+  // in services/stories.ts) — a claim leaves it set. `stopRequested` is never cleared by a
+  // release at all: Stop means "parked until a human presses Play again", so a released
+  // story keeps carrying it into `todo`, and only `requestPlay` clears it. Gating on the
+  // column as well as the flags is what keeps a stale flag from relabelling a card that has
+  // already moved on.
   const queued = startable && story.playRequestedAt !== null;
   const stopping = stoppable && story.stopRequested;
+  // A story parked by Stop is not, in `todo`, "stopping" — it already stopped. "Stopping…"
+  // there would read as broken or stuck; "Stopped" reads as a resting state the human can
+  // clear with Play. Neutral rather than amber: nothing needs the human's attention here,
+  // the card is simply waiting exactly the way it would if nobody had ever played it.
+  const stoppedParked = startable && story.stopRequested;
 
   const {className: titleClassName, ...restTitleProps} = titleProps ?? {};
 
@@ -195,6 +202,7 @@ export function StoryCard({
         )}
         {queued && <Chip tone="amber">Queued</Chip>}
         {stopping && <Chip tone="amber">Stopping…</Chip>}
+        {stoppedParked && <Chip>Stopped</Chip>}
       </div>
 
       {story.progressPct > 0 && (

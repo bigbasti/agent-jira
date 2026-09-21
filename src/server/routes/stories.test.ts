@@ -271,7 +271,7 @@ describe('stories', () => {
     expect(await timeline(cookie, s3.id)).toEqual([]);
   });
 
-  it('clears stop_requested and the claim when released to todo', async () => {
+  it('clears the play request and the claim when released to todo, but keeps a pending stop', async () => {
     const {cookie, user, projectId} = await setup();
     const agentId = addAgent(user.id, 'agent-1');
     const story = await createStory(cookie, {projectId, title: 'Released'});
@@ -292,14 +292,20 @@ describe('stories', () => {
       actor: 'agent',
       agentId,
     });
+    // The stop request survives the release on purpose: that is what makes Stop actually
+    // stop a story an autonomous agent could otherwise re-claim on the spot (see
+    // `isClaimableBy`). Only pressing Play again clears it.
     expect(released).toMatchObject({
       status: 'todo',
       claimedByAgentId: null,
-      stopRequested: false,
+      stopRequested: true,
       playRequestedAt: null,
       // An ordinary release keeps the work done so far visible.
       progressPct: 60,
     });
+
+    const replayed = await post(cookie, `/api/stories/${story.id}/play`);
+    expect(replayed.json()).toMatchObject({stopRequested: false});
 
     // Rework from `finished` is different: the progress bar starts over.
     await move(cookie, story.id, {status: 'in_progress'});
@@ -516,10 +522,11 @@ describe('stories', () => {
     expect(reordered.json()).toMatchObject({status: 'todo', playRequestedAt, stopRequested: true});
     expect(reordered.json().rank < other.rank).toBe(true);
 
-    // Arriving in todo from another column still releases the story.
+    // Arriving in todo from another column still releases the story: the play request is
+    // cleared, but the stop request is not — Stop stays parked until Play is pressed again.
     await move(cookie, queued.id, {status: 'in_progress'});
     const released = await move(cookie, queued.id, {status: 'todo'});
-    expect(released.json()).toMatchObject({playRequestedAt: null, stopRequested: false});
+    expect(released.json()).toMatchObject({playRequestedAt: null, stopRequested: true});
   });
 
   it('refuses to let an agent claim a blocked story, but lets a human move it', async () => {
