@@ -97,4 +97,29 @@ describe('ConnectAgentDialog', () => {
 
     expect(screen.queryByText(/claude mcp add --transport http agent-jira\s*$/)).not.toBeInTheDocument();
   });
+
+  it('shows an error with a retry action when config fails to load, instead of loading forever', () => {
+    mockFetch();
+    const onRetryConfig = vi.fn();
+    renderWithClient(
+      <ConnectAgentDialog open onOpenChange={() => {}} agents={[]} configError onRetryConfig={onRetryConfig} />,
+    );
+
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn't load|can't reach|something went wrong/i);
+    expect(screen.getByRole('button', {name: /retry/i})).toBeInTheDocument();
+  });
+
+  it('retries loading config when Retry is pressed', async () => {
+    mockFetch();
+    const user = userEvent.setup();
+    const onRetryConfig = vi.fn();
+    renderWithClient(
+      <ConnectAgentDialog open onOpenChange={() => {}} agents={[]} configError onRetryConfig={onRetryConfig} />,
+    );
+
+    await user.click(screen.getByRole('button', {name: /retry/i}));
+
+    expect(onRetryConfig).toHaveBeenCalledTimes(1);
+  });
 });

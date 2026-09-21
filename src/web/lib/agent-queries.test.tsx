@@ -5,7 +5,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {useAgents, useConfig, useRenameAgent, useRevokeAgent, useSetAutonomous} from './agent-queries.js';
 import {BOARD_KEY} from './board-queries.js';
 import {makeAgent, makeBoard} from '../testing/fixtures.js';
-import {createTestQueryClient, jsonResponse, mockFetch} from '../testing/render.js';
+import {createTestQueryClient, deferred, jsonResponse, mockFetch} from '../testing/render.js';
 import type {BoardSnapshot} from '../../shared/types.js';
 
 afterEach(() => {
@@ -55,6 +55,47 @@ describe('useSetAutonomous', () => {
     const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
     expect(agents.find(a => a.id === 'a1')?.autonomous).toBe(true);
   });
+
+  it('flips the switch immediately, before the round trip resolves', async () => {
+    const answer = deferred<Response>();
+    mockFetch().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === 'PATCH' && path === '/api/agents/a1') return answer.promise;
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: [makeAgent({id: 'a1', autonomous: false})]}));
+
+    const {result} = renderWithClient(() => useSetAutonomous(), client);
+    result.current.mutate({agentId: 'a1', autonomous: true});
+
+    await waitFor(() => {
+      const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
+      expect(agents.find(a => a.id === 'a1')?.autonomous).toBe(true);
+    });
+
+    answer.resolve(jsonResponse(200, makeAgent({id: 'a1', autonomous: true})));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it('rolls the switch back and reports an error when the server refuses', async () => {
+    mockFetch().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === 'PATCH' && path === '/api/agents/a1') {
+        return jsonResponse(404, {error: 'not_found', message: 'Agent not found.'});
+      }
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: [makeAgent({id: 'a1', autonomous: false})]}));
+
+    const {result} = renderWithClient(() => useSetAutonomous(), client);
+    result.current.mutate({agentId: 'a1', autonomous: true});
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
+    expect(agents.find(a => a.id === 'a1')?.autonomous).toBe(false);
+  });
 });
 
 describe('useRenameAgent', () => {
@@ -76,6 +117,47 @@ describe('useRenameAgent', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
     expect(agents.find(a => a.id === 'a1')?.name).toBe('New name');
+  });
+
+  it('renames the agent immediately, before the round trip resolves', async () => {
+    const answer = deferred<Response>();
+    mockFetch().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === 'PATCH' && path === '/api/agents/a1') return answer.promise;
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: [makeAgent({id: 'a1', name: 'Old name'})]}));
+
+    const {result} = renderWithClient(() => useRenameAgent(), client);
+    result.current.mutate({agentId: 'a1', name: 'New name'});
+
+    await waitFor(() => {
+      const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
+      expect(agents.find(a => a.id === 'a1')?.name).toBe('New name');
+    });
+
+    answer.resolve(jsonResponse(200, makeAgent({id: 'a1', name: 'New name'})));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it('rolls the name back and reports an error when the server refuses', async () => {
+    mockFetch().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === 'PATCH' && path === '/api/agents/a1') {
+        return jsonResponse(404, {error: 'not_found', message: 'Agent not found.'});
+      }
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: [makeAgent({id: 'a1', name: 'Old name'})]}));
+
+    const {result} = renderWithClient(() => useRenameAgent(), client);
+    result.current.mutate({agentId: 'a1', name: 'New name'});
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
+    expect(agents.find(a => a.id === 'a1')?.name).toBe('Old name');
   });
 });
 

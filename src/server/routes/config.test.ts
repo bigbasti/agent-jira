@@ -9,6 +9,7 @@ function config(overrides: Partial<AppConfig> = {}): AppConfig {
     sessionSecret: 'test-session-secret-at-least-32-chars-long',
     publicUrl: 'http://localhost:3000',
     nodeEnv: 'test',
+    trustProxy: false,
     ...overrides,
   };
 }

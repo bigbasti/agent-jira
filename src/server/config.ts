@@ -4,6 +4,7 @@ export interface AppConfig {
   sessionSecret: string;
   publicUrl: string;
   nodeEnv: string;
+  trustProxy: boolean;
 }
 
 const DEV_SESSION_SECRET = 'dev-only-session-secret-do-not-use-in-production!!';
@@ -32,5 +33,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const publicUrl = env.PUBLIC_URL ?? `http://localhost:${port}`;
 
-  return {port, databasePath, sessionSecret, publicUrl, nodeEnv};
+  // Off by default: trusting `X-Forwarded-*` headers from a client that is not actually
+  // behind a reverse proxy lets that client forge its own IP and dodge every per-IP rate
+  // limit (see `oauthRoutes`'s registration limiter). Only a deployer who has actually put
+  // a proxy in front of this server should opt in.
+  const trustProxy = env.TRUST_PROXY === 'true' || env.TRUST_PROXY === '1';
+
+  return {port, databasePath, sessionSecret, publicUrl, nodeEnv, trustProxy};
 }

@@ -110,6 +110,8 @@ export function BoardScreen({user}: {user: User}) {
         open={connectingAgent}
         onOpenChange={setConnectingAgent}
         config={config.data}
+        configError={config.isError}
+        onRetryConfig={() => void config.refetch()}
         agents={board.data?.agents ?? []}
       />
     </div>

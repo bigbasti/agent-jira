@@ -107,17 +107,18 @@ export const patchAgentSchema = z
  */
 export function patchAgent(db: Database, hub: EventHub, userId: string, agentId: string, input: unknown): Agent {
   const parsed = patchAgentSchema.parse(input);
-  requireOwnedAgent(db, userId, agentId);
 
   const patch: {autonomous?: boolean; name?: string} = {};
   if (parsed.autonomous !== undefined) patch.autonomous = parsed.autonomous;
   if (parsed.name !== undefined) patch.name = sanitiseAgentName(parsed.name);
 
-  // `updateAgent` cannot return `undefined` here: the agent was just confirmed to exist,
-  // and nothing between that check and this call can remove it (this function does not
-  // run inside a transaction another writer could interleave with — better-sqlite3 is
-  // synchronous, so there is no `await` between the two for another request to land in).
-  return updateAgent(db, hub, {userId, agentId}, patch)!;
+  // `updateAgent` does its own ownership lookup (it has to — it's also called from the MCP
+  // server with no prior check) and returns `undefined` when the agent isn't `userId`'s or
+  // doesn't exist, at which point this reports the same `NotFoundError` `requireOwnedAgent`
+  // used to, without a second, redundant lookup for the common case where it does exist.
+  const agent = updateAgent(db, hub, {userId, agentId}, patch);
+  if (!agent) throw new NotFoundError('Agent not found');
+  return agent;
 }
 
 /** The rank at the end of `userId`'s `todo` column — where a revoke-released story lands. */

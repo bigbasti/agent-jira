@@ -10,6 +10,10 @@ export interface ConnectAgentDialogProps {
   onOpenChange: (open: boolean) => void;
   /** From `useConfig()`; `undefined` while it is still loading. */
   config?: {mcpUrl: string};
+  /** True when `useConfig()` failed — swaps the loading placeholders for a retry. */
+  configError?: boolean;
+  /** Refetches `GET /api/config`; required when `configError` can be true. */
+  onRetryConfig?: () => void;
   /** The caller's connected agents — the same live list `AgentStrip` renders. */
   agents: Agent[];
 }
@@ -28,7 +32,14 @@ const SECTION_HEADING = 'text-label font-medium text-muted';
  * hardcoded — it comes from `GET /api/config`), the CLI command to add it, what the
  * consent screen will ask, and the agents already connected, each revocable.
  */
-export function ConnectAgentDialog({open, onOpenChange, config, agents}: ConnectAgentDialogProps) {
+export function ConnectAgentDialog({
+  open,
+  onOpenChange,
+  config,
+  configError,
+  onRetryConfig,
+  agents,
+}: ConnectAgentDialogProps) {
   const revoke = useRevokeAgent();
   const [copied, setCopied] = useState(false);
 
@@ -58,24 +69,35 @@ export function ConnectAgentDialog({open, onOpenChange, config, agents}: Connect
       description="Point a Claude Code session at this board over MCP."
     >
       <div className="flex flex-col gap-5">
-        <section className="flex flex-col gap-1.5">
-          <h3 className={SECTION_HEADING}>MCP server URL</h3>
-          <p className="break-all rounded-well border border-hairline bg-well px-3 py-2 font-mono text-label text-text">
-            {mcpUrl ?? 'Loading…'}
-          </p>
-        </section>
-
-        <section className="flex flex-col gap-1.5">
-          <h3 className={SECTION_HEADING}>Add it with the Claude Code CLI</h3>
-          <div className="flex items-center gap-2 rounded-well border border-hairline bg-well px-3 py-2">
-            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-label text-text">
-              {command ?? 'Loading…'}
-            </code>
-            <Button type="button" variant="secondary" size="sm" disabled={!command} onClick={copyCommand}>
-              {copied ? 'Copied' : 'Copy'}
+        {configError ? (
+          <section role="alert" className="flex flex-col gap-2 rounded-well border border-hairline bg-well px-3 py-2">
+            <p className="text-label text-text">Couldn't load the connection details. Check your connection and try again.</p>
+            <Button type="button" variant="secondary" size="sm" className="self-start" onClick={onRetryConfig}>
+              Retry
             </Button>
-          </div>
-        </section>
+          </section>
+        ) : (
+          <>
+            <section className="flex flex-col gap-1.5">
+              <h3 className={SECTION_HEADING}>MCP server URL</h3>
+              <p className="break-all rounded-well border border-hairline bg-well px-3 py-2 font-mono text-label text-text">
+                {mcpUrl ?? 'Loading…'}
+              </p>
+            </section>
+
+            <section className="flex flex-col gap-1.5">
+              <h3 className={SECTION_HEADING}>Add it with the Claude Code CLI</h3>
+              <div className="flex items-center gap-2 rounded-well border border-hairline bg-well px-3 py-2">
+                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-label text-text">
+                  {command ?? 'Loading…'}
+                </code>
+                <Button type="button" variant="secondary" size="sm" disabled={!command} onClick={copyCommand}>
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </section>
+          </>
+        )}
 
         <section className="flex flex-col gap-1.5">
           <h3 className={SECTION_HEADING}>What happens next</h3>

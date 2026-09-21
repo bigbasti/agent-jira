@@ -1,5 +1,5 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
-import type {Agent} from '../../shared/types.js';
+import type {Agent, BoardSnapshot} from '../../shared/types.js';
 import type {ApiError} from './api.js';
 import {api} from './api.js';
 import {BOARD_KEY, upsertAgent, useBoard} from './board-queries.js';
@@ -21,12 +21,41 @@ export function useAgents() {
   return {...board, data: board.data?.agents};
 }
 
+/** What an undone patch needs to put back — nothing more, so nothing else is disturbed. */
+interface AgentPatchRollback {
+  agentId: string;
+  previous: Pick<Agent, 'autonomous' | 'name'>;
+}
+
+/** Reapplies `fields` to `agentId` in the cached board, if that agent is still there. */
+function patchCachedAgent(
+  client: ReturnType<typeof useQueryClient>,
+  agentId: string,
+  fields: Partial<Pick<Agent, 'autonomous' | 'name'>>,
+): Agent | undefined {
+  const board = client.getQueryData<BoardSnapshot>(BOARD_KEY);
+  const agent = board?.agents.find(candidate => candidate.id === agentId);
+  if (!agent) return undefined;
+  const next = {...agent, ...fields};
+  upsertAgent(client, next);
+  return agent;
+}
+
 /** Toggles whether an agent may claim its next story without asking. */
 export function useSetAutonomous() {
   const client = useQueryClient();
-  return useMutation<Agent, ApiError, {agentId: string; autonomous: boolean}>({
+  return useMutation<Agent, ApiError, {agentId: string; autonomous: boolean}, AgentPatchRollback | undefined>({
     mutationFn: ({agentId, autonomous}) =>
       api.patch<Agent>(`/api/agents/${encodeURIComponent(agentId)}`, {autonomous}),
+    onMutate: async ({agentId, autonomous}) => {
+      // Stop an in-flight board load from landing on top of the patch we are about to make.
+      await client.cancelQueries({queryKey: BOARD_KEY});
+      const previous = patchCachedAgent(client, agentId, {autonomous});
+      return previous && {agentId, previous: {autonomous: previous.autonomous, name: previous.name}};
+    },
+    onError: (_error, _vars, rollback) => {
+      if (rollback) patchCachedAgent(client, rollback.agentId, rollback.previous);
+    },
     onSuccess: agent => upsertAgent(client, agent),
   });
 }
@@ -34,8 +63,16 @@ export function useSetAutonomous() {
 /** Renames an agent. */
 export function useRenameAgent() {
   const client = useQueryClient();
-  return useMutation<Agent, ApiError, {agentId: string; name: string}>({
+  return useMutation<Agent, ApiError, {agentId: string; name: string}, AgentPatchRollback | undefined>({
     mutationFn: ({agentId, name}) => api.patch<Agent>(`/api/agents/${encodeURIComponent(agentId)}`, {name}),
+    onMutate: async ({agentId, name}) => {
+      await client.cancelQueries({queryKey: BOARD_KEY});
+      const previous = patchCachedAgent(client, agentId, {name});
+      return previous && {agentId, previous: {autonomous: previous.autonomous, name: previous.name}};
+    },
+    onError: (_error, _vars, rollback) => {
+      if (rollback) patchCachedAgent(client, rollback.agentId, rollback.previous);
+    },
     onSuccess: agent => upsertAgent(client, agent),
   });
 }

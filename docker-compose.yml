@@ -1,0 +1,15 @@
+services:
+  agent-jira:
+    build: .
+    image: agent-jira:latest
+    restart: unless-stopped
+    ports: ["${PORT:-3000}:3000"]
+    environment:
+      NODE_ENV: production
+      DATABASE_PATH: /data/agent-jira.db
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    volumes: ["agent-jira-data:/data"]
+volumes:
+  agent-jira-data:

@@ -71,4 +71,26 @@ describe('loadConfig', () => {
       expect(config.port).toBe(65535);
     });
   });
+
+  describe('TRUST_PROXY', () => {
+    it('defaults to false when unset', () => {
+      const config = loadConfig(baseEnv());
+      expect(config.trustProxy).toBe(false);
+    });
+
+    it('is true when set to "true"', () => {
+      const config = loadConfig({...baseEnv(), TRUST_PROXY: 'true'});
+      expect(config.trustProxy).toBe(true);
+    });
+
+    it('is true when set to "1"', () => {
+      const config = loadConfig({...baseEnv(), TRUST_PROXY: '1'});
+      expect(config.trustProxy).toBe(true);
+    });
+
+    it('is false for any other value', () => {
+      const config = loadConfig({...baseEnv(), TRUST_PROXY: 'yes'});
+      expect(config.trustProxy).toBe(false);
+    });
+  });
 });
