@@ -1,7 +1,7 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
 import {rankBetween} from '../../shared/rank.js';
 import type {Status} from '../../shared/status.js';
-import type {BoardSnapshot, Project, Story, StoryUpdate} from '../../shared/types.js';
+import type {Agent, BoardSnapshot, Project, Story, StoryUpdate} from '../../shared/types.js';
 import type {ApiError} from './api.js';
 import {api} from './api.js';
 
@@ -123,6 +123,33 @@ export function useMoveStory() {
   });
 }
 
+/**
+ * Asks for a story to be picked up next: `POST /api/stories/:id/play`. The server sets
+ * `playRequestedAt` and publishes `story.updated`; the card reads that field itself to
+ * show a "queued" state until an agent claims the story (or the server clears it again).
+ */
+export function usePlayStory() {
+  const client = useQueryClient();
+  return useMutation<Story, ApiError, string>({
+    mutationFn: id => api.post<Story>(`/api/stories/${encodeURIComponent(id)}/play`),
+    onSuccess: story => upsertStory(client, story),
+  });
+}
+
+/**
+ * Asks the agent working on a story to stop: `POST /api/stories/:id/stop`. The server
+ * sets `stopRequested`; the card shows "stopping…" until the agent releases or moves the
+ * story on, both of which clear the flag server-side and arrive back through this same
+ * patch (here, or over the live socket for another tab).
+ */
+export function useStopStory() {
+  const client = useQueryClient();
+  return useMutation<Story, ApiError, string>({
+    mutationFn: id => api.post<Story>(`/api/stories/${encodeURIComponent(id)}/stop`),
+    onSuccess: story => upsertStory(client, story),
+  });
+}
+
 export interface StoryFormInput {
   title: string;
   projectId: string;
@@ -145,6 +172,24 @@ export function upsertStory(client: ReturnType<typeof useQueryClient>, story: St
       stories: exists
         ? board.stories.map(candidate => (candidate.id === story.id ? story : candidate))
         : [...board.stories, story],
+    };
+  });
+}
+
+/**
+ * Patches one agent into the cached board snapshot, replacing it if already present.
+ * Exported so both `useLiveBoard` (`agent.updated`) and agent-management mutations apply
+ * the exact same surgical patch.
+ */
+export function upsertAgent(client: ReturnType<typeof useQueryClient>, agent: Agent): void {
+  client.setQueryData<BoardSnapshot>(BOARD_KEY, board => {
+    if (!board) return board;
+    const exists = board.agents.some(candidate => candidate.id === agent.id);
+    return {
+      ...board,
+      agents: exists
+        ? board.agents.map(candidate => (candidate.id === agent.id ? agent : candidate))
+        : [...board.agents, agent],
     };
   });
 }

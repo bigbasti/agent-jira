@@ -5,25 +5,31 @@ import {Board} from '../components/board/Board.js';
 import type {StoryActions} from '../components/board/StoryCard.js';
 import {TopBar} from '../components/board/TopBar.js';
 import {Button} from '../components/ui/Button.js';
+import {ConnectAgentDialog} from '../components/agent/ConnectAgentDialog.js';
 import {StoryDetailDialog} from '../components/story/StoryDetailDialog.js';
 import {StoryFormDialog} from '../components/story/StoryFormDialog.js';
-import {useBoard, useDeleteStory, useMoveStory} from '../lib/board-queries.js';
+import {useConfig} from '../lib/agent-queries.js';
+import {useBoard, useDeleteStory, useMoveStory, usePlayStory, useStopStory} from '../lib/board-queries.js';
 import {useLiveBoard} from '../lib/useLiveBoard.js';
 import {useLogout} from '../lib/queries.js';
-
-/** Task 14 replaces these with the play/stop mutations and the connect-agent dialog. */
-function notWiredYet() {}
 
 export function BoardScreen({user}: {user: User}) {
   const board = useBoard();
   const move = useMoveStory();
   const deleteStory = useDeleteStory();
+  const playStory = usePlayStory();
+  const stopStory = useStopStory();
   const logout = useLogout();
   const live = useLiveBoard();
 
   const [creatingStory, setCreatingStory] = useState(false);
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
+  const [connectingAgent, setConnectingAgent] = useState(false);
+
+  // Fetched only once the dialog is actually opened — no reason to pay a config round
+  // trip on every board load for a dialog most visits never open.
+  const config = useConfig(connectingAgent);
 
   // "Reconnecting…" only means something once a first connection has actually happened —
   // without this, the socket's brief moment of not-yet-open on mount would flash the same
@@ -38,13 +44,14 @@ export function BoardScreen({user}: {user: User}) {
       onOpen: story => setOpenStoryId(story.id),
       onEdit: story => setEditingStory(story),
       onDelete: story => deleteStory.mutate(story.id),
-      onPlay: notWiredYet,
-      onStop: notWiredYet,
+      onPlay: story => playStory.mutate(story.id),
+      onStop: story => stopStory.mutate(story.id),
     }),
-    [deleteStory],
+    [deleteStory, playStory, stopStory],
   );
 
   const stories = board.data?.stories ?? [];
+  const openConnectAgent = () => setConnectingAgent(true);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -54,11 +61,11 @@ export function BoardScreen({user}: {user: User}) {
           board.isPending ? 'Loading the board…' : everConnected && !live.connected ? 'Reconnecting…' : ''
         }
         onNewStory={() => setCreatingStory(true)}
-        onConnectAgent={notWiredYet}
+        onConnectAgent={openConnectAgent}
         onLogout={() => logout.mutate()}
         loggingOut={logout.isPending}
       />
-      <AgentStrip agents={board.data?.agents ?? []} stories={stories} onConnectAgent={notWiredYet} />
+      <AgentStrip agents={board.data?.agents ?? []} stories={stories} onConnectAgent={openConnectAgent} />
 
       <main className="min-h-0 flex-1 pt-4">
         {board.isError ? (
@@ -78,6 +85,12 @@ export function BoardScreen({user}: {user: User}) {
       {deleteStory.isError && (
         <MoveErrorToast message={deleteStory.error.message} onDismiss={() => deleteStory.reset()} />
       )}
+      {playStory.isError && (
+        <MoveErrorToast message={playStory.error.message} onDismiss={() => playStory.reset()} />
+      )}
+      {stopStory.isError && (
+        <MoveErrorToast message={stopStory.error.message} onDismiss={() => stopStory.reset()} />
+      )}
 
       <StoryFormDialog mode="create" open={creatingStory} onOpenChange={setCreatingStory} />
       <StoryFormDialog
@@ -93,6 +106,12 @@ export function BoardScreen({user}: {user: User}) {
           onOpenChange={open => !open && setOpenStoryId(null)}
         />
       )}
+      <ConnectAgentDialog
+        open={connectingAgent}
+        onOpenChange={setConnectingAgent}
+        config={config.data}
+        agents={board.data?.agents ?? []}
+      />
     </div>
   );
 }

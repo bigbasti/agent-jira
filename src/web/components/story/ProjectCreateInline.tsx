@@ -1,4 +1,4 @@
-import {useRef, useState, type KeyboardEvent, type RefObject} from 'react';
+import {useCallback, useRef, useState, type KeyboardEvent, type RefObject} from 'react';
 import type {Project} from '../../../shared/types.js';
 import {ApiError} from '../../lib/api.js';
 import {useCreateProject} from '../../lib/board-queries.js';
@@ -46,6 +46,20 @@ export function ProjectCreateInline({onCreated, onCancel, nameInputRef}: Project
 
   const createProject = useCreateProject();
 
+  // Merges the internal validation ref with the caller's optional one. Wrapped in
+  // `useCallback`, keyed only on `nameInputRef` (a stable ref object from the caller, or
+  // `undefined`): an inline arrow recreated every render would give this ref prop a new
+  // identity on every keystroke, and React responds to that by calling the old callback
+  // with `null` and the new one with the node all over again — churn with no purpose,
+  // since the DOM node itself never changes.
+  const setNameRef = useCallback(
+    (node: HTMLInputElement | null) => {
+      fields.name.current = node;
+      if (nameInputRef) nameInputRef.current = node;
+    },
+    [nameInputRef],
+  );
+
   function reject(field: Field, message: string) {
     setFieldError({field, message});
     fields[field].current?.focus();
@@ -89,10 +103,7 @@ export function ProjectCreateInline({onCreated, onCancel, nameInputRef}: Project
       className="flex flex-col gap-3 rounded-well border border-hairline-strong bg-well/50 p-3"
     >
       <Input
-        ref={node => {
-          fields.name.current = node;
-          if (nameInputRef) nameInputRef.current = node;
-        }}
+        ref={setNameRef}
         label="Project name"
         autoFocus
         value={name}

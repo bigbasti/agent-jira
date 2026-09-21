@@ -97,6 +97,13 @@ export function StoryCard({
   const stoppable = story.status === 'in_progress' || story.status === 'in_test';
   const actionCount = editable ? 2 : startable || stoppable ? 1 : 0;
 
+  // The server only clears `playRequestedAt`/`stopRequested` on a release back to `todo`
+  // (see `moveStory` in services/stories.ts) — a claim leaves `playRequestedAt` set, and
+  // finishing leaves `stopRequested` alone. Gating on the column as well as the flag is
+  // what keeps a stale flag from relabelling a card that has already moved on.
+  const queued = startable && story.playRequestedAt !== null;
+  const stopping = stoppable && story.stopRequested;
+
   const {className: titleClassName, ...restTitleProps} = titleProps ?? {};
 
   return (
@@ -140,7 +147,7 @@ export function StoryCard({
               size="sm"
               className="px-1.5"
               aria-label={`Start ${story.title}`}
-              disabled={blocked}
+              disabled={blocked || queued}
               onClick={() => actions.onPlay(story)}
             >
               <PlayIcon />
@@ -152,6 +159,7 @@ export function StoryCard({
               size="sm"
               className="px-1.5"
               aria-label={`Stop ${story.title}`}
+              disabled={stopping}
               onClick={() => actions.onStop(story)}
             >
               <StopIcon />
@@ -185,6 +193,8 @@ export function StoryCard({
             Blocked
           </Chip>
         )}
+        {queued && <Chip tone="amber">Queued</Chip>}
+        {stopping && <Chip tone="amber">Stopping…</Chip>}
       </div>
 
       {story.progressPct > 0 && (

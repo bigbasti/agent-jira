@@ -1,8 +1,9 @@
 import {and, eq, gt, sql} from 'drizzle-orm';
 import type {Database} from '../db/index.js';
 import {agents, stories, storyUpdates} from '../db/schema.js';
-import type {EventHub} from '../events/hub.js';
-import type {Agent, AgentStatus} from '../../shared/types.js';
+import {findOwnedAgent} from '../services/agents.js';
+
+export {findOwnedAgent, updateAgent} from '../services/agents.js';
 
 /**
  * The control block: the board's side channel to a working agent.
@@ -37,60 +38,6 @@ export interface ControlBlockInput {
 /** The control block that claims nothing: no stop, not autonomous, no remarks. */
 export function emptyControl(): ControlBlock {
   return {stop_requested: false, autonomous: false, remarks: []};
-}
-
-function toAgent(row: typeof agents.$inferSelect): Agent {
-  return {
-    id: row.id,
-    userId: row.userId,
-    name: row.name,
-    autonomous: row.autonomous,
-    status: row.status,
-    currentStoryId: row.currentStoryId,
-    lastSeenAt: row.lastSeenAt,
-    createdAt: row.createdAt,
-  };
-}
-
-/** Loads one of `userId`'s agents. Another user's agent is indistinguishable from none. */
-export function findOwnedAgent(db: Database, userId: string, agentId: string): Agent | undefined {
-  const row = db
-    .select()
-    .from(agents)
-    .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
-    .get();
-  return row ? toAgent(row) : undefined;
-}
-
-/**
- * Patches an agent row and publishes `agent.updated` — but only when something the board
- * renders actually changed. Every tool call touches `last_seen_at`; publishing an event
- * for each of those would fill every open socket with noise that changes no pixel.
- */
-export function updateAgent(
-  db: Database,
-  hub: EventHub,
-  input: {userId: string; agentId: string},
-  patch: {status?: AgentStatus; currentStoryId?: string | null; autonomous?: boolean},
-): Agent | undefined {
-  const {userId, agentId} = input;
-  const existing = findOwnedAgent(db, userId, agentId);
-  if (!existing) return undefined;
-
-  const next: Agent = {...existing, ...patch};
-  const changed =
-    next.status !== existing.status ||
-    next.currentStoryId !== existing.currentStoryId ||
-    next.autonomous !== existing.autonomous;
-  if (!changed) return existing;
-
-  db.update(agents)
-    .set(patch)
-    .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
-    .run();
-
-  hub.publish(userId, {type: 'agent.updated', agent: next});
-  return next;
 }
 
 /**

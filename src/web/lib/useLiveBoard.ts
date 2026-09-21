@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
 import {useQueryClient, type QueryClient} from '@tanstack/react-query';
-import {BOARD_KEY, storyUpdatesKey, upsertStory} from './board-queries.js';
+import {BOARD_KEY, storyUpdatesKey, upsertAgent, upsertStory} from './board-queries.js';
 import type {BoardSnapshot, ServerEvent, StoryUpdate} from '../../shared/types.js';
 
 const INITIAL_BACKOFF_MS = 1000;
@@ -84,16 +84,15 @@ function applyServerEvent(client: QueryClient, event: ServerEvent): void {
       return;
 
     case 'agent.updated':
-      client.setQueryData<BoardSnapshot>(BOARD_KEY, board => {
-        if (!board) return board;
-        const exists = board.agents.some(agent => agent.id === event.agent.id);
-        return {
-          ...board,
-          agents: exists
-            ? board.agents.map(agent => (agent.id === event.agent.id ? event.agent : agent))
-            : [...board.agents, event.agent],
-        };
-      });
+      upsertAgent(client, event.agent);
+      return;
+
+    // A revoked agent — see `revokeAgent` in services/agents.ts. The story it may have
+    // held arrives separately as its own `story.updated` event.
+    case 'agent.deleted':
+      client.setQueryData<BoardSnapshot>(BOARD_KEY, board =>
+        board ? {...board, agents: board.agents.filter(agent => agent.id !== event.id)} : board,
+      );
       return;
 
     // Projects live inside the board snapshot and have no cache key of their own, so
@@ -134,12 +133,19 @@ export function useLiveBoard(options: UseLiveBoardOptions = {}): {connected: boo
 
     function handleMessage(event: {data: string}) {
       if (cancelled) return;
-      let frame: ServerFrame;
+      let parsed: unknown;
       try {
-        frame = JSON.parse(event.data) as ServerFrame;
+        parsed = JSON.parse(event.data);
       } catch {
         return;
       }
+      // The server only ever sends an object with a string `type`, but this is the one
+      // boundary where that is someone else's promise, not this file's — a malformed or
+      // unrecognised frame is ignored rather than trusted enough to read `.type` off it.
+      if (typeof parsed !== 'object' || parsed === null || typeof (parsed as {type?: unknown}).type !== 'string') {
+        return;
+      }
+      const frame = parsed as ServerFrame;
       if (frame.type === 'hello') return;
       applyServerEvent(client, frame);
     }
@@ -147,6 +153,7 @@ export function useLiveBoard(options: UseLiveBoardOptions = {}): {connected: boo
     function handleClose() {
       if (cancelled) return;
       if (socket) teardown(socket);
+      socket = null;
       setConnected(false);
       scheduleReconnect();
     }
@@ -158,6 +165,11 @@ export function useLiveBoard(options: UseLiveBoardOptions = {}): {connected: boo
     }
 
     function scheduleReconnect() {
+      // Defensive: `handleClose` runs at most once per socket in normal operation (its own
+      // teardown removes its `close` listener before this fires again), but a socket that
+      // ever dispatched `close` twice would otherwise leave two reconnect timers pending —
+      // the stale one from the first dispatch, plus this new one.
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       const delay = Math.min(INITIAL_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
       attempt += 1;
       reconnectTimer = setTimeout(connect, delay);

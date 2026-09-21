@@ -139,6 +139,41 @@ describe('StoryCard', () => {
     expect(screen.queryByText('Blocked')).not.toBeInTheDocument();
   });
 
+  it('shows a queued state and disables play once a play has been requested', () => {
+    renderCard(makeStory({id: 's1', title: 'Queued one', status: 'todo', playRequestedAt: 12345}));
+
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Start Queued one'})).toBeDisabled();
+  });
+
+  it('shows no queued state before a play has been requested', () => {
+    renderCard(makeStory({id: 's1', status: 'todo', playRequestedAt: null}));
+
+    expect(screen.queryByText('Queued')).not.toBeInTheDocument();
+  });
+
+  it('clears the queued state once the story leaves todo, even if playRequestedAt lingers', () => {
+    // The server only clears `playRequestedAt` on a release back to `todo`; a claim
+    // (todo -> in_progress) leaves it set. The card must not show "Queued" once the story
+    // is no longer sitting in `todo` waiting to be claimed.
+    renderCard(makeStory({id: 's1', status: 'in_progress', playRequestedAt: 12345}));
+
+    expect(screen.queryByText('Queued')).not.toBeInTheDocument();
+  });
+
+  it('shows a stopping state and disables stop once a stop has been requested', () => {
+    renderCard(makeStory({id: 's1', title: 'Running one', status: 'in_progress', stopRequested: true}));
+
+    expect(screen.getByText('Stopping…')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Stop Running one'})).toBeDisabled();
+  });
+
+  it('shows no stopping state before a stop has been requested', () => {
+    renderCard(makeStory({id: 's1', status: 'in_progress', stopRequested: false}));
+
+    expect(screen.queryByText('Stopping…')).not.toBeInTheDocument();
+  });
+
   it('opens the story when the card title is activated', async () => {
     const user = userEvent.setup();
     const actions = renderCard(makeStory({id: 's1', title: 'Wire the board'}));

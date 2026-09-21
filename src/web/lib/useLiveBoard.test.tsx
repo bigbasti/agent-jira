@@ -2,10 +2,10 @@ import {QueryClientProvider, type QueryClient} from '@tanstack/react-query';
 import {act, renderHook, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {BOARD_KEY, storyUpdatesKey} from './board-queries.js';
+import {BOARD_KEY, storyUpdatesKey, useMoveStory} from './board-queries.js';
 import {useLiveBoard, type LiveSocket} from './useLiveBoard.js';
 import {makeAgent, makeBoard, makeStory, makeUpdate} from '../testing/fixtures.js';
-import {createTestQueryClient} from '../testing/render.js';
+import {createTestQueryClient, deferred, jsonResponse, mockFetch} from '../testing/render.js';
 import type {BoardSnapshot, ServerEvent} from '../../shared/types.js';
 
 /**
@@ -36,8 +36,25 @@ class FakeSocket implements LiveSocket {
     this.listeners.message.forEach(listener => listener({data: JSON.stringify(payload)}));
   }
 
+  /** Sends whatever raw text is given, bypassing `JSON.stringify` — for malformed frames. */
+  emitRaw(data: string): void {
+    this.listeners.message.forEach(listener => listener({data}));
+  }
+
   emitClose(): void {
     this.listeners.close.forEach(listener => listener({}));
+  }
+
+  /**
+   * The registered `close` handler itself, so a test can invoke it more than once —
+   * simulating a pathological double `close` dispatch that `emitClose` (which goes
+   * through `removeEventListener`-aware bookkeeping) cannot reproduce, since the first
+   * call already tears itself down.
+   */
+  rawCloseListener(): () => void {
+    const listener = this.listeners.close[0];
+    if (!listener) throw new Error('no close listener registered');
+    return listener as () => void;
   }
 }
 
@@ -221,6 +238,16 @@ describe('useLiveBoard — cache patches', () => {
     expect(agents.map(a => a.id)).toContain('a2');
   });
 
+  it('removes an agent from the cache on agent.deleted', () => {
+    const seed = makeBoard({agents: [makeAgent({id: 'a1'}), makeAgent({id: 'a2'})]});
+    const {client, sockets} = renderLiveBoard(seed);
+    socketAt(sockets, 0).emitOpen();
+
+    socketAt(sockets, 0).emitMessage({type: 'agent.deleted', id: 'a1'});
+
+    expect(board(client).agents.map(a => a.id)).toEqual(['a2']);
+  });
+
   it('invalidates the board on project.changed so projects are refetched', () => {
     const seed = makeBoard();
     const {client, sockets} = renderLiveBoard(seed);
@@ -304,6 +331,25 @@ describe('useLiveBoard — reconnect', () => {
     expect(sockets).toHaveLength(6); // capped at 15s
   });
 
+  it('clears a pending reconnect timer instead of stacking a second one if a socket closes twice', async () => {
+    // A well-behaved socket never dispatches `close` twice, but nothing stops one from
+    // doing so — and before the fix, a second dispatch would leave *two* reconnect timers
+    // pending (the stale one from the first dispatch, plus the new one), each eventually
+    // opening its own socket.
+    const {sockets} = renderLiveBoard(makeBoard());
+    const handleClose = socketAt(sockets, 0).rawCloseListener();
+
+    handleClose(); // schedules a reconnect at 1s (attempt -> 1)
+    handleClose(); // a second, hypothetical dispatch: must replace that timer, not add one
+
+    await vi.advanceTimersByTimeAsync(1000);
+    // The stale 1s timer must have been cleared — nothing fires at 1s any more.
+    expect(sockets).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1000); // now at 2s: the second attempt's own delay
+    expect(sockets).toHaveLength(2);
+  });
+
   it('resets the backoff after a successful reconnect', async () => {
     const {sockets} = renderLiveBoard(makeBoard());
     socketAt(sockets, 0).emitClose();
@@ -321,15 +367,22 @@ describe('useLiveBoard — reconnect', () => {
 });
 
 describe('useLiveBoard — cleanup', () => {
-  it('closes the socket and cancels any pending reconnect timer on unmount', async () => {
+  it('closes an open socket on unmount', () => {
+    const {unmount, sockets} = renderLiveBoard(makeBoard());
+    socketAt(sockets, 0).emitOpen();
+
+    unmount();
+
+    expect(socketAt(sockets, 0).close).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending reconnect timer on unmount, once the socket has already closed itself', async () => {
     vi.useFakeTimers();
     try {
       const {unmount, sockets} = renderLiveBoard(makeBoard());
       socketAt(sockets, 0).emitClose();
 
       unmount();
-
-      expect(socketAt(sockets, 0).close).toHaveBeenCalledTimes(1);
 
       // No reconnect timer should fire after unmount — a leaked timer would create a
       // second socket here.
@@ -346,5 +399,130 @@ describe('useLiveBoard — cleanup', () => {
     rerender();
 
     expect(sockets).toHaveLength(1);
+  });
+
+  it('does not call close a second time on a socket that already closed itself', () => {
+    vi.useFakeTimers();
+    try {
+      const {unmount, sockets} = renderLiveBoard(makeBoard());
+      socketAt(sockets, 0).emitClose(); // the socket is already gone; schedules a reconnect
+
+      unmount();
+
+      // Before the fix, the stale socket reference survived the close and `.close()` was
+      // called on it again during unmount cleanup.
+      expect(socketAt(sockets, 0).close).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('useLiveBoard — malformed or unknown-shaped frames', () => {
+  it('ignores a message that is not valid JSON', () => {
+    const seed = makeBoard({stories: [makeStory({id: 's1', title: 'Unchanged'})]});
+    const {client, sockets} = renderLiveBoard(seed);
+    socketAt(sockets, 0).emitOpen();
+
+    expect(() => socketAt(sockets, 0).emitRaw('{not valid json')).not.toThrow();
+
+    expect(storyIn(client, 's1').title).toBe('Unchanged');
+  });
+
+  it('ignores a frame that parses to something other than an object', () => {
+    const seed = makeBoard({stories: [makeStory({id: 's1', title: 'Unchanged'})]});
+    const {client, sockets} = renderLiveBoard(seed);
+    socketAt(sockets, 0).emitOpen();
+
+    for (const raw of ['null', '42', '"just a string"', '[1,2,3]', 'true']) {
+      expect(() => socketAt(sockets, 0).emitRaw(raw)).not.toThrow();
+    }
+
+    expect(storyIn(client, 's1').title).toBe('Unchanged');
+  });
+
+  it('ignores an object frame with an unrecognised or missing `type`', () => {
+    const seed = makeBoard({stories: [makeStory({id: 's1', title: 'Unchanged'})]});
+    const {client, sockets} = renderLiveBoard(seed);
+    socketAt(sockets, 0).emitOpen();
+
+    expect(() => socketAt(sockets, 0).emitRaw(JSON.stringify({type: 'story.frobnicated', foo: 'bar'}))).not.toThrow();
+    expect(() => socketAt(sockets, 0).emitRaw(JSON.stringify({foo: 'bar'}))).not.toThrow();
+    expect(() => socketAt(sockets, 0).emitRaw(JSON.stringify({type: 42}))).not.toThrow();
+
+    expect(storyIn(client, 's1').title).toBe('Unchanged');
+  });
+});
+
+describe('useLiveBoard — a live event mid-move', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function renderMoveAndLive(board: BoardSnapshot) {
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, board);
+    const sockets: FakeSocket[] = [];
+    const socketFactory = (): LiveSocket => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    };
+    const wrapper = ({children}: {children: ReactNode}) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const view = renderHook(() => ({live: useLiveBoard({socketFactory}), move: useMoveStory()}), {wrapper});
+    return {...view, client, sockets};
+  }
+
+  /**
+   * The crux test flagged, and left unwritten, in task 11: a `story.moved` event for a
+   * *different* story landing while a drag is still in flight must survive that drag's
+   * refusal and rollback. `useMoveStory`'s rollback and `useLiveBoard`'s event handling
+   * both patch only the one story they name (see `applyServerEvent`/`onError` in
+   * `board-queries.ts`) — this proves that discipline actually composes, rather than one
+   * of the two secretly overwriting the whole snapshot.
+   */
+  it('survives a story.moved event for a different story arriving while a move is refused and rolled back', async () => {
+    const moveAnswer = deferred<Response>();
+    const fetchMock = mockFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method === 'POST' && path === '/api/stories/d1/move') return moveAnswer.promise;
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+
+    const seed = makeBoard({
+      stories: [
+        makeStory({id: 'd1', status: 'draft', rank: 'A', title: 'Sketch it'}),
+        makeStory({id: 's2', status: 'todo', rank: 'M', title: 'Untouched by the drag'}),
+      ],
+    });
+    const {result, client, sockets} = renderMoveAndLive(seed);
+    socketAt(sockets, 0).emitOpen();
+
+    // Start the drag: d1 -> todo. It stays in flight until `moveAnswer` settles.
+    result.current.move.mutate({storyId: 'd1', status: 'todo', beforeId: null, afterId: null});
+    await waitFor(() => expect(storyIn(client, 'd1').status).toBe('todo'));
+
+    // A live event for a DIFFERENT story lands mid-flight — another tab (or an agent)
+    // moved s2 while this drag was still pending.
+    socketAt(sockets, 0).emitMessage({
+      type: 'story.moved',
+      story: makeStory({id: 's2', status: 'in_progress', rank: 'Z', title: 'Untouched by the drag'}),
+    });
+    expect(storyIn(client, 's2').status).toBe('in_progress');
+    expect(storyIn(client, 's2').rank).toBe('Z');
+
+    // The move is refused; its rollback must touch only d1.
+    moveAnswer.resolve(jsonResponse(409, {error: 'transition_refused', message: 'Not allowed.'}));
+    await waitFor(() => expect(result.current.move.isError).toBe(true));
+
+    expect(storyIn(client, 'd1').status).toBe('draft');
+    expect(storyIn(client, 'd1').rank).toBe('A');
+    // The concurrent live patch is still standing — a whole-snapshot rollback would have
+    // clobbered it with a copy of the board that predates the event.
+    expect(storyIn(client, 's2').status).toBe('in_progress');
+    expect(storyIn(client, 's2').rank).toBe('Z');
   });
 });

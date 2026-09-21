@@ -1,11 +1,10 @@
 import clsx from 'clsx';
 import type {Agent, AgentStatus, Story} from '../../../shared/types.js';
+import {useSetAutonomous} from '../../lib/agent-queries.js';
 import {Button} from '../ui/Button.js';
+import {Switch} from '../ui/Switch.js';
 
-/**
- * Presence only — one pill per connected agent. Task 14 adds the autonomous switch and
- * the connect dialog behind `onConnectAgent`.
- */
+/** One pill per connected agent: presence, its current story, and the autonomous switch. */
 export interface AgentStripProps {
   agents: Agent[];
   stories: Story[];
@@ -22,6 +21,8 @@ const DOTS: Record<AgentStatus, string> = {
 };
 
 export function AgentStrip({agents, stories, onConnectAgent}: AgentStripProps) {
+  const setAutonomous = useSetAutonomous();
+
   return (
     <section
       aria-label="Agents"
@@ -40,6 +41,7 @@ export function AgentStrip({agents, stories, onConnectAgent}: AgentStripProps) {
             key={agent.id}
             agent={agent}
             currentStory={stories.find(story => story.id === agent.currentStoryId)}
+            onToggleAutonomous={autonomous => setAutonomous.mutate({agentId: agent.id, autonomous})}
           />
         ))
       )}
@@ -47,7 +49,15 @@ export function AgentStrip({agents, stories, onConnectAgent}: AgentStripProps) {
   );
 }
 
-function AgentPill({agent, currentStory}: {agent: Agent; currentStory?: Story}) {
+function AgentPill({
+  agent,
+  currentStory,
+  onToggleAutonomous,
+}: {
+  agent: Agent;
+  currentStory?: Story;
+  onToggleAutonomous: (autonomous: boolean) => void;
+}) {
   return (
     <div className="flex h-7 shrink-0 items-center gap-2 rounded-chip border border-hairline bg-surface pr-2.5 pl-2">
       <span className={clsx('size-1.5 shrink-0 rounded-full', DOTS[agent.status])} aria-hidden="true" />
@@ -58,6 +68,15 @@ function AgentPill({agent, currentStory}: {agent: Agent; currentStory?: Story}) 
           {currentStory.title}
         </span>
       )}
+      {/* The one place besides progress and primary actions the accent may appear: an
+          agent that may act on its own wears it, the switch that grants that does too. */}
+      <Switch
+        label="Autonomous"
+        checked={agent.autonomous}
+        onCheckedChange={onToggleAutonomous}
+        tone="accent"
+        className="border-l border-hairline pl-2"
+      />
     </div>
   );
 }

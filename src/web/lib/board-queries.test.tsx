@@ -2,8 +2,8 @@ import {QueryClientProvider, type QueryClient} from '@tanstack/react-query';
 import {renderHook, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {BOARD_KEY, useBoard, useMoveStory} from './board-queries.js';
-import {makeBoard, makeStory} from '../testing/fixtures.js';
+import {BOARD_KEY, upsertAgent, useBoard, useMoveStory, usePlayStory, useStopStory} from './board-queries.js';
+import {makeAgent, makeBoard, makeStory} from '../testing/fixtures.js';
 import {createTestQueryClient, deferred, jsonResponse, mockFetch} from '../testing/render.js';
 import type {BoardSnapshot, Story} from '../../shared/types.js';
 
@@ -237,5 +237,92 @@ describe('useMoveStory', () => {
       const loadsAfter = fetchMock.mock.calls.filter(call => call[0] === '/api/board').length;
       expect(loadsAfter).toBe(loadsBefore + 1);
     });
+  });
+});
+
+/** Renders one hook against a client already seeded with `BOARD`, mocking `fetch`. */
+function renderWithSeededBoard<T>(useHook: () => T, routeMock: (fetchMock: ReturnType<typeof mockFetch>) => void) {
+  const fetchMock = mockFetch();
+  routeMock(fetchMock);
+  const client = createTestQueryClient();
+  client.setQueryData(BOARD_KEY, BOARD);
+  const wrapper = ({children}: {children: ReactNode}) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return {...renderHook(useHook, {wrapper}), client, fetchMock};
+}
+
+describe('usePlayStory', () => {
+  it('posts to the play endpoint and patches the returned story into the board cache', async () => {
+    const {result, client, fetchMock} = renderWithSeededBoard(() => usePlayStory(), fetchMock => {
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (init?.method === 'POST' && path === '/api/stories/t1/play') {
+          return jsonResponse(200, makeStory({id: 't1', status: 'todo', playRequestedAt: 1234}));
+        }
+        throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+      });
+    });
+
+    result.current.mutate('t1');
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith('/api/stories/t1/play', expect.objectContaining({method: 'POST'}));
+    expect(storyIn(client, 't1').playRequestedAt).toBe(1234);
+  });
+
+  it('surfaces a refusal (e.g. the story is blocked) as a readable error', async () => {
+    const {result} = renderWithSeededBoard(() => usePlayStory(), fetchMock => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(409, {error: 'transition_refused', message: 'That story is blocked and cannot be claimed yet.'}),
+      );
+    });
+
+    result.current.mutate('t1');
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('That story is blocked and cannot be claimed yet.');
+  });
+});
+
+describe('useStopStory', () => {
+  it('posts to the stop endpoint and patches the returned story into the board cache', async () => {
+    const {result, client, fetchMock} = renderWithSeededBoard(() => useStopStory(), fetchMock => {
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (init?.method === 'POST' && path === '/api/stories/t1/stop') {
+          return jsonResponse(200, makeStory({id: 't1', status: 'in_progress', stopRequested: true}));
+        }
+        throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+      });
+    });
+
+    result.current.mutate('t1');
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchMock).toHaveBeenCalledWith('/api/stories/t1/stop', expect.objectContaining({method: 'POST'}));
+    expect(storyIn(client, 't1').stopRequested).toBe(true);
+  });
+});
+
+describe('upsertAgent', () => {
+  it('replaces an existing agent in the board cache by id', () => {
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: [makeAgent({id: 'a1', status: 'idle'})]}));
+
+    upsertAgent(client, makeAgent({id: 'a1', status: 'working'}));
+
+    const agents = client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents ?? [];
+    expect(agents).toHaveLength(1);
+    expect(agents[0]?.status).toBe('working');
+  });
+
+  it('appends an agent that is not already in the cache', () => {
+    const client = createTestQueryClient();
+    client.setQueryData(BOARD_KEY, makeBoard({agents: []}));
+
+    upsertAgent(client, makeAgent({id: 'a1'}));
+
+    expect(client.getQueryData<BoardSnapshot>(BOARD_KEY)?.agents.map(a => a.id)).toEqual(['a1']);
   });
 });

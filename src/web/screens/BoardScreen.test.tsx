@@ -18,6 +18,7 @@ function serveBoard(board: BoardSnapshot) {
     const path = String(input);
     if (path === '/api/board') return jsonResponse(200, board);
     if (path === '/api/auth/logout') return jsonResponse(204);
+    if (path === '/api/config') return jsonResponse(200, {publicUrl: 'https://board.example', mcpUrl: 'https://board.example/mcp'});
     throw new Error(`unexpected request: ${path}`);
   });
   return fetchMock;
@@ -89,6 +90,106 @@ describe('BoardScreen', () => {
     expect(await within(strip).findByText('claude-code-1')).toBeInTheDocument();
     expect(within(strip).getByText('working')).toBeInTheDocument();
     expect(within(strip).getByText('Build the thing')).toBeInTheDocument();
+  });
+});
+
+describe('BoardScreen — connecting an agent', () => {
+  it('opens the connect-agent dialog from the empty strip, showing the real mcp url', async () => {
+    const user = userEvent.setup();
+    serveBoard(makeBoard());
+    renderWithClient(<BoardScreen user={USER} />);
+    const strip = await screen.findByRole('region', {name: 'Agents'});
+
+    await user.click(within(strip).getByRole('button', {name: 'Connect an agent'}));
+
+    const dialog = await screen.findByRole('dialog', {name: 'Connect an agent'});
+    expect(await within(dialog).findByText('https://board.example/mcp')).toBeInTheDocument();
+  });
+
+  it('opens the connect-agent dialog from the account menu', async () => {
+    const user = userEvent.setup();
+    serveBoard(makeBoard());
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByRole('heading', {name: /Draft/});
+
+    await user.click(screen.getByRole('button', {name: 'Account'}));
+    await user.click(screen.getByRole('menuitem', {name: 'Connect agent'}));
+
+    expect(await screen.findByRole('dialog', {name: 'Connect an agent'})).toBeInTheDocument();
+  });
+});
+
+describe('BoardScreen — play and stop', () => {
+  it('queues a story for pickup when Start is pressed', async () => {
+    const user = userEvent.setup();
+    const fetchMock = serveBoard(makeBoard({stories: [makeStory({id: 's1', status: 'todo', title: 'Queued one'})]}));
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/board') {
+        return jsonResponse(200, makeBoard({stories: [makeStory({id: 's1', status: 'todo', title: 'Queued one'})]}));
+      }
+      if (path === '/api/stories/s1/play' && init?.method === 'POST') {
+        return jsonResponse(200, makeStory({id: 's1', status: 'todo', title: 'Queued one', playRequestedAt: 1}));
+      }
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Queued one');
+
+    await user.click(screen.getByRole('button', {name: 'Start Queued one'}));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/stories/s1/play', expect.objectContaining({method: 'POST'})),
+    );
+    expect(await screen.findByText('Queued')).toBeInTheDocument();
+  });
+
+  it('asks a running story to stop when Stop is pressed', async () => {
+    const user = userEvent.setup();
+    const fetchMock = serveBoard(
+      makeBoard({stories: [makeStory({id: 's1', status: 'in_progress', title: 'Running one'})]}),
+    );
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/board') {
+        return jsonResponse(200, makeBoard({stories: [makeStory({id: 's1', status: 'in_progress', title: 'Running one'})]}));
+      }
+      if (path === '/api/stories/s1/stop' && init?.method === 'POST') {
+        return jsonResponse(200, makeStory({id: 's1', status: 'in_progress', title: 'Running one', stopRequested: true}));
+      }
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Running one');
+
+    await user.click(screen.getByRole('button', {name: 'Stop Running one'}));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/stories/s1/stop', expect.objectContaining({method: 'POST'})),
+    );
+    expect(await screen.findByText('Stopping…')).toBeInTheDocument();
+  });
+
+  it('shows a refused play as a dismissable toast', async () => {
+    const user = userEvent.setup();
+    const fetchMock = serveBoard(makeBoard({stories: [makeStory({id: 's1', status: 'todo', title: 'Blocked one'})]}));
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/board') {
+        return jsonResponse(200, makeBoard({stories: [makeStory({id: 's1', status: 'todo', title: 'Blocked one'})]}));
+      }
+      if (path === '/api/stories/s1/play' && init?.method === 'POST') {
+        return jsonResponse(404, {error: 'not_found'});
+      }
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Blocked one');
+
+    await user.click(screen.getByRole('button', {name: 'Start Blocked one'}));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent("That is no longer there — it may have been deleted.");
   });
 });
 

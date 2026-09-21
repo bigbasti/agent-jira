@@ -75,4 +75,5 @@ export type ServerEvent =
   | {type: 'story.progress'; id: string; progressPct: number; progressLabel: string}
   | {type: 'story.update'; storyId: string; update: StoryUpdate}
   | {type: 'agent.updated'; agent: Agent}
+  | {type: 'agent.deleted'; id: string}
   | {type: 'project.changed'};
