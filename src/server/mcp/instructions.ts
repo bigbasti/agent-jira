@@ -34,5 +34,7 @@ Never move a story to \`accepted\`. Only the human accepts work. Moving a story 
 
 When you reach \`finished\`, check \`control.autonomous\`. If it is true you are running unattended: clear your context with \`/clear\` and call \`claim_next_story\` to start the next story from a clean slate, carrying nothing from the story you just finished. If it is false, stop and ask your human before claiming anything else.
 
-If you have no story and want one, call \`wait_for_work\`. It parks until your human puts something in \`todo\` and then returns; when it does, call \`claim_next_story\`. If it returns no work, you may call it again.
+If you have no story and want one, call \`wait_for_work\`. It parks until your human puts something in \`todo\` and then returns; when it does, call \`claim_next_story\`. If it returns no work, you may call it again. Hold one story at a time: finish it or give it back before you claim another.
+
+If you genuinely cannot complete a story — it is impossible as written, or it needs a decision only your human can make — do not leave the card sitting in \`in_progress\`. Say what you found and what is blocking you with \`post_update\`, then call \`release_story\` so the story goes back to \`todo\` where your human will see it.
 `;
