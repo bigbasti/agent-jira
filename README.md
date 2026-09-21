@@ -50,9 +50,9 @@ claude mcp add --transport http agent-jira http://localhost:3000/mcp
 
 The first tool call opens a browser window at this server's sign-in page (bring your own —
 the same account you registered above works). Sign in, and you land on a consent screen
-that shows exactly which client is asking to connect and what it will be able to do:
-create and read your projects, and move stories along a claimed story's lifecycle. Choose
-**Allow**, and the agent appears in the strip at the top of the board, ready to work.
+that shows exactly which client is asking to connect and what it will be able to do: read
+your board, create and move stories, and post progress updates. Choose **Allow**, and the
+agent appears in the strip at the top of the board, ready to work.
 
 From the board itself, the **Connect agent** button in the top bar shows the same MCP URL
 and `claude mcp add` command, plus every agent you've already connected, each with a
