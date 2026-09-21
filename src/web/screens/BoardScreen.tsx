@@ -1,30 +1,37 @@
-import {useMemo} from 'react';
-import type {User} from '../../shared/types.js';
+import {useMemo, useState} from 'react';
+import type {Story, User} from '../../shared/types.js';
 import {AgentStrip} from '../components/board/AgentStrip.js';
 import {Board} from '../components/board/Board.js';
 import type {StoryActions} from '../components/board/StoryCard.js';
 import {TopBar} from '../components/board/TopBar.js';
 import {Button} from '../components/ui/Button.js';
-import {useBoard, useMoveStory} from '../lib/board-queries.js';
+import {StoryDetailDialog} from '../components/story/StoryDetailDialog.js';
+import {StoryFormDialog} from '../components/story/StoryFormDialog.js';
+import {useBoard, useDeleteStory, useMoveStory} from '../lib/board-queries.js';
 import {useLogout} from '../lib/queries.js';
 
-/** Tasks 10 and 14 replace these with the story dialogs and the play/stop mutations. */
+/** Task 14 replaces these with the play/stop mutations and the connect-agent dialog. */
 function notWiredYet() {}
 
 export function BoardScreen({user}: {user: User}) {
   const board = useBoard();
   const move = useMoveStory();
+  const deleteStory = useDeleteStory();
   const logout = useLogout();
+
+  const [creatingStory, setCreatingStory] = useState(false);
+  const [editingStory, setEditingStory] = useState<Story | null>(null);
+  const [openStoryId, setOpenStoryId] = useState<string | null>(null);
 
   const actions = useMemo<StoryActions>(
     () => ({
-      onOpen: notWiredYet,
-      onEdit: notWiredYet,
-      onDelete: notWiredYet,
+      onOpen: story => setOpenStoryId(story.id),
+      onEdit: story => setEditingStory(story),
+      onDelete: story => deleteStory.mutate(story.id),
       onPlay: notWiredYet,
       onStop: notWiredYet,
     }),
-    [],
+    [deleteStory],
   );
 
   const stories = board.data?.stories ?? [];
@@ -34,7 +41,7 @@ export function BoardScreen({user}: {user: User}) {
       <TopBar
         email={user.email}
         status={board.isPending ? 'Loading the board…' : ''}
-        onNewStory={notWiredYet}
+        onNewStory={() => setCreatingStory(true)}
         onConnectAgent={notWiredYet}
         onLogout={() => logout.mutate()}
         loggingOut={logout.isPending}
@@ -56,6 +63,24 @@ export function BoardScreen({user}: {user: User}) {
       </main>
 
       {move.isError && <MoveErrorToast message={move.error.message} onDismiss={() => move.reset()} />}
+      {deleteStory.isError && (
+        <MoveErrorToast message={deleteStory.error.message} onDismiss={() => deleteStory.reset()} />
+      )}
+
+      <StoryFormDialog mode="create" open={creatingStory} onOpenChange={setCreatingStory} />
+      <StoryFormDialog
+        mode="edit"
+        story={editingStory ?? undefined}
+        open={editingStory !== null}
+        onOpenChange={open => !open && setEditingStory(null)}
+      />
+      {openStoryId && (
+        <StoryDetailDialog
+          storyId={openStoryId}
+          open={true}
+          onOpenChange={open => !open && setOpenStoryId(null)}
+        />
+      )}
     </div>
   );
 }

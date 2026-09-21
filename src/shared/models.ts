@@ -1,6 +1,11 @@
 export type Provider = 'anthropic' | 'openai';
 export interface ModelOption { id: string; label: string; provider: Provider }
 
+export const PROVIDER_LABELS: Record<Provider, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+};
+
 export const MODELS: ModelOption[] = [
   {id: 'claude-opus-5',     label: 'Claude Opus 5',     provider: 'anthropic'},
   {id: 'claude-fable-5-1',  label: 'Claude Fable 5.1',  provider: 'anthropic'},

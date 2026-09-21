@@ -1,6 +1,6 @@
 import {DEFAULT_MODEL_ID} from '../../shared/models.js';
 import {STATUSES} from '../../shared/status.js';
-import type {Agent, BoardSnapshot, Project, Story} from '../../shared/types.js';
+import type {Agent, BoardSnapshot, Project, Story, StoryUpdate} from '../../shared/types.js';
 
 /**
  * Board fixtures for the web tests. Every builder takes the id it is identified by, so a
@@ -49,6 +49,18 @@ export function makeAgent(agent: Partial<Agent> & Pick<Agent, 'id'>): Agent {
     lastSeenAt: null,
     createdAt: 1,
     ...agent,
+  };
+}
+
+export function makeUpdate(update: Partial<StoryUpdate> & Pick<StoryUpdate, 'id' | 'storyId'>): StoryUpdate {
+  return {
+    authorType: 'user',
+    authorId: 'u1',
+    kind: 'remark',
+    body: `Update ${update.id}`,
+    progressPct: null,
+    createdAt: 1,
+    ...update,
   };
 }
 

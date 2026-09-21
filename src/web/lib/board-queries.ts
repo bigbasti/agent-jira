@@ -1,7 +1,7 @@
 import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
 import {rankBetween} from '../../shared/rank.js';
 import type {Status} from '../../shared/status.js';
-import type {BoardSnapshot, Story} from '../../shared/types.js';
+import type {BoardSnapshot, Project, Story, StoryUpdate} from '../../shared/types.js';
 import type {ApiError} from './api.js';
 import {api} from './api.js';
 
@@ -120,5 +120,98 @@ export function useMoveStory() {
     // A move can change what blocks other stories, so the whole snapshot is refetched
     // rather than only the story the server echoed back.
     onSettled: () => client.invalidateQueries({queryKey: BOARD_KEY}),
+  });
+}
+
+export interface StoryFormInput {
+  title: string;
+  projectId: string;
+  model: string;
+  description: string;
+  dependsOn: string[];
+}
+
+/** Patches one story into the cached board snapshot, replacing it if already present. */
+function upsertStory(client: ReturnType<typeof useQueryClient>, story: Story): void {
+  client.setQueryData<BoardSnapshot>(BOARD_KEY, board => {
+    if (!board) return board;
+    const exists = board.stories.some(candidate => candidate.id === story.id);
+    return {
+      ...board,
+      stories: exists
+        ? board.stories.map(candidate => (candidate.id === story.id ? story : candidate))
+        : [...board.stories, story],
+    };
+  });
+}
+
+/** Creates a story (always landing in `draft`) and adds it to the cached board. */
+export function useCreateStory() {
+  const client = useQueryClient();
+  return useMutation<Story, ApiError, StoryFormInput>({
+    mutationFn: input => api.post<Story>('/api/stories', input),
+    onSuccess: story => upsertStory(client, story),
+  });
+}
+
+/** Saves a story's editable fields and updates it in the cached board. */
+export function useUpdateStory() {
+  const client = useQueryClient();
+  return useMutation<Story, ApiError, StoryFormInput & {id: string}>({
+    mutationFn: ({id, ...patch}) => api.patch<Story>(`/api/stories/${encodeURIComponent(id)}`, patch),
+    onSuccess: story => upsertStory(client, story),
+  });
+}
+
+/** Deletes a story and drops it from the cached board. */
+export function useDeleteStory() {
+  const client = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: id => api.del(`/api/stories/${encodeURIComponent(id)}`),
+    onSuccess: (_result, id) => {
+      client.setQueryData<BoardSnapshot>(BOARD_KEY, board =>
+        board ? {...board, stories: board.stories.filter(story => story.id !== id)} : board,
+      );
+    },
+  });
+}
+
+export interface CreateProjectInput {
+  name: string;
+  path: string;
+}
+
+/** Creates a project and adds it to the cached board's project list. */
+export function useCreateProject() {
+  const client = useQueryClient();
+  return useMutation<Project, ApiError, CreateProjectInput>({
+    mutationFn: input => api.post<Project>('/api/projects', input),
+    onSuccess: project => {
+      client.setQueryData<BoardSnapshot>(BOARD_KEY, board =>
+        board ? {...board, projects: [...board.projects, project]} : board,
+      );
+    },
+  });
+}
+
+export const storyUpdatesKey = (storyId: string) => ['storyUpdates', storyId] as const;
+
+/** A story's timeline, oldest first — exactly what the server returns, unsorted again here. */
+export function useStoryUpdates(storyId: string, enabled = true) {
+  return useQuery<StoryUpdate[], ApiError>({
+    queryKey: storyUpdatesKey(storyId),
+    queryFn: () => api.get<StoryUpdate[]>(`/api/stories/${encodeURIComponent(storyId)}/updates`),
+    enabled,
+  });
+}
+
+/** Posts a human remark and appends it to that story's cached timeline. */
+export function useAddRemark(storyId: string) {
+  const client = useQueryClient();
+  return useMutation<StoryUpdate, ApiError, string>({
+    mutationFn: body => api.post<StoryUpdate>(`/api/stories/${encodeURIComponent(storyId)}/updates`, {body}),
+    onSuccess: update => {
+      client.setQueryData<StoryUpdate[]>(storyUpdatesKey(storyId), (updates = []) => [...updates, update]);
+    },
   });
 }

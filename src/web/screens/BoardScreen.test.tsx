@@ -92,6 +92,72 @@ describe('BoardScreen', () => {
   });
 });
 
+describe('BoardScreen — story dialogs', () => {
+  it('opens the create dialog from "New story"', async () => {
+    const user = userEvent.setup();
+    serveBoard(makeBoard());
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByRole('heading', {name: /Draft/});
+
+    await user.click(screen.getByRole('button', {name: 'New story'}));
+
+    expect(await screen.findByRole('dialog', {name: 'New story'})).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Add to draft'})).toBeInTheDocument();
+  });
+
+  it('opens the edit dialog, pre-filled, from a draft card', async () => {
+    const user = userEvent.setup();
+    serveBoard(makeBoard({stories: [makeStory({id: 's1', status: 'draft', title: 'Sketch it'})]}));
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Sketch it');
+
+    await user.click(screen.getByRole('button', {name: 'Edit Sketch it'}));
+
+    const dialog = await screen.findByRole('dialog', {name: 'Edit story'});
+    expect(within(dialog).getByLabelText('Title')).toHaveValue('Sketch it');
+  });
+
+  it('opens the detail dialog from a card', async () => {
+    const user = userEvent.setup();
+    const board = makeBoard({
+      stories: [makeStory({id: 's1', status: 'todo', title: 'Queued one', progressPct: 10, progressLabel: 'Reading'})],
+    });
+    const fetchMock = mockFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === '/api/board') return jsonResponse(200, board);
+      if (path === '/api/stories/s1/updates') return jsonResponse(200, []);
+      throw new Error(`unexpected request: ${path}`);
+    });
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Queued one');
+
+    await user.click(screen.getByRole('button', {name: 'Queued one'}));
+
+    expect(await screen.findByRole('dialog', {name: 'Queued one'})).toBeInTheDocument();
+  });
+
+  it('deletes a draft story from its card', async () => {
+    const user = userEvent.setup();
+    const fetchMock = serveBoard(makeBoard({stories: [makeStory({id: 's1', status: 'draft', title: 'Sketch it'})]}));
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === '/api/board') return jsonResponse(200, makeBoard({stories: [makeStory({id: 's1', status: 'draft', title: 'Sketch it'})]}));
+      if (path === '/api/stories/s1' && init?.method === 'DELETE') return jsonResponse(204);
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${path}`);
+    });
+    renderWithClient(<BoardScreen user={USER} />);
+    await screen.findByText('Sketch it');
+
+    await user.click(screen.getByRole('button', {name: 'Delete Sketch it'}));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/stories/s1', expect.objectContaining({method: 'DELETE'})),
+    );
+    await waitFor(() => expect(screen.queryByText('Sketch it')).not.toBeInTheDocument());
+  });
+});
+
 describe('MoveErrorToast', () => {
   it('names the reason the move was refused and can be dismissed', async () => {
     const user = userEvent.setup();
