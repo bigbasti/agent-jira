@@ -7,8 +7,8 @@ you to review and accept. It is a normal web app — sign in, click around, drag
 the thing doing the cards is a coding agent talking to the server over MCP, not another
 human.
 
-This README covers running it in Docker, connecting an agent, how the board works, and
-running it for development.
+This README covers running it in Docker, connecting an agent, cold-starting one with the
+host runner script, how the board works, and running it for development.
 
 ## 60-second quickstart
 
@@ -58,6 +58,98 @@ From the board itself, the **Connect agent** button in the top bar shows the sam
 and `claude mcp add` command, plus every agent you've already connected, each with a
 **Revoke** button — revoking deletes that agent's credentials immediately and releases
 whatever story it was holding back to `To do`.
+
+## Host runner: cold-starting an agent
+
+Connecting an agent only gets you a worker once something is already running and parked,
+waiting for work over MCP's `wait_for_work` long-poll. If nothing is running at all — you
+played a story from a cold start, or the machine that runs your agents just rebooted — the
+story just sits in `To do` with nobody to notice it. `scripts/agent-runner.sh` closes that
+gap: a small script you run on your own machine, outside the container, that polls the
+board for played work nobody has picked up yet and launches `claude` in the right project
+directory to claim it.
+
+**Prerequisites:** [`jq`](https://jqlang.org/) and the Claude Code CLI (`claude`) must both
+be on your `PATH`. The script checks for both before it does anything else and exits with a
+clear message, rather than a cryptic failure on its first poll, if either is missing.
+
+**Setup**
+
+1. Copy the example config and lock it down — it will hold a live bearer credential:
+
+   ```bash
+   mkdir -p ~/.agent-jira
+   cp scripts/runner.example.json ~/.agent-jira/runner.json
+   chmod 600 ~/.agent-jira/runner.json
+   ```
+
+2. Fill in a token. `runner.json`'s `"token"` is the same kind of bearer credential an
+   agent gets the moment you approve it on the consent screen the **Connect agent**
+   dialog sends you to — the dialog itself only shows you the `claude mcp add` command,
+   never the raw token, because the server stores nothing but a hash of it once it's
+   issued (see `src/server/oauth/tokens.ts`) and hands the plaintext only to whichever
+   client just completed the exchange. For an interactive agent that client is the
+   `claude` CLI; for the runner, mint one yourself by walking through the same OAuth
+   exchange by hand, once, from a terminal signed in to the board:
+
+   ```bash
+   BASE=http://localhost:3000   # your board's URL
+   read -rp 'Email: ' EMAIL
+   read -rsp 'Password: ' PASSWORD; echo
+
+   # 1. Sign in and keep the session cookie.
+   curl -fsS -c cookies.txt -X POST "$BASE/api/auth/login" \
+     -H 'content-type: application/json' \
+     -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" >/dev/null
+
+   # 2. Register a client for the runner and a PKCE pair. The redirect URI just has to
+   #    be a loopback address — nothing needs to be listening on it.
+   CLIENT_ID=$(curl -fsS -X POST "$BASE/oauth/register" \
+     -H 'content-type: application/json' \
+     -d '{"client_name":"agent-jira runner","redirect_uris":["http://127.0.0.1:8945/callback"]}' \
+     | jq -r .client_id)
+   VERIFIER=$(openssl rand -base64 96 | tr -d '=+/\n' | cut -c1-64)
+   CHALLENGE=$(printf '%s' "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 | tr '+/' '-_' | tr -d '=\n')
+
+   # 3. Grant consent as yourself. This is the same "Allow" you'd click in the browser —
+   #    it creates the agent (named "Host runner" here; revoke it like any other agent
+   #    from the Connect agent dialog) and hands back an authorization code.
+   CODE=$(curl -fsS -b cookies.txt -X POST "$BASE/oauth/authorize" \
+     -H 'content-type: application/json' \
+     -d "{\"client_id\":\"$CLIENT_ID\",\"redirect_uri\":\"http://127.0.0.1:8945/callback\",\"response_type\":\"code\",\"code_challenge\":\"$CHALLENGE\",\"code_challenge_method\":\"S256\",\"decision\":\"allow\",\"agent_name\":\"Host runner\"}" \
+     | jq -r .redirectTo | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+
+   # 4. Exchange the code for a token — this is the one line that prints it.
+   curl -fsS -X POST "$BASE/oauth/token" \
+     -d "grant_type=authorization_code&code=$CODE&redirect_uri=http://127.0.0.1:8945/callback&client_id=$CLIENT_ID&code_verifier=$VERIFIER" \
+     | jq -r .access_token
+   ```
+
+   Paste the printed `aj_…` value into `runner.json`'s `"token"` field. Treat it like a
+   password: it never needs to be typed again, it isn't recoverable once you lose it
+   (only a hash of it is stored), and the fix if it leaks is the same **Revoke** button
+   any agent gets.
+
+3. Run it:
+
+   ```bash
+   scripts/agent-runner.sh
+   ```
+
+   Every `pollSeconds` (default 10) it asks the board for the oldest played story nobody
+   is working on. The moment there is one, it runs `claude -p "…"` in that story's
+   project directory to pick it up, blocking until that agent session ends before it
+   polls again — so it never launches a second agent on top of one still working. A
+   failed poll (server down, expired token) is logged and retried with backoff rather
+   than killing the loop; a launch that exits almost immediately is treated as a crash
+   rather than finished work and backs off the same way, so a broken `claude` invocation
+   can't spin in a restart loop. Leave it running in a terminal (or under `tmux`, a
+   `launchd` agent, or a `systemd --user` unit) on whatever machine should cold-start
+   agents. `AGENT_JIRA_CONFIG` overrides the config path (default
+   `~/.agent-jira/runner.json`); `AGENT_JIRA_LAUNCH_CMD` overrides the launch command
+   (default `claude`) — handy for a dry run, e.g. `AGENT_JIRA_LAUNCH_CMD=echo
+   scripts/agent-runner.sh` to see the command it would have run without starting a
+   real agent.
 
 ## How the board works
 

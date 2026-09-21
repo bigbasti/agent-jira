@@ -2,7 +2,8 @@ import type {FastifyInstance, FastifyReply} from 'fastify';
 import {z} from 'zod';
 import {requireUser} from '../services/auth.js';
 import {NotFoundError} from '../services/projects.js';
-import {listAgents, patchAgent, revokeAgent} from '../services/agents.js';
+import {authenticateBearer} from '../oauth/tokens.js';
+import {listAgents, nextQueuedStory, patchAgent, revokeAgent} from '../services/agents.js';
 
 function sendError(reply: FastifyReply, err: unknown): FastifyReply {
   if (err instanceof z.ZodError) {
@@ -35,5 +36,19 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       return sendError(reply, err);
     }
+  });
+
+  // The host runner script's cold-start poll. Bearer-authenticated with the same tokens
+  // MCP uses (an agent's connection, minted by the OAuth consent flow) rather than the
+  // human's session cookie — the runner has no browser session, only a bearer token
+  // minted the same way any agent's is (see README.md's "Host runner" section for how
+  // to get one).
+  app.get('/api/runner/queued', async (req, reply) => {
+    const identity = authenticateBearer(app.db, req.headers.authorization);
+    if (!identity) {
+      return reply.code(401).send({error: 'invalid_token', message: 'A valid bearer token is required.'});
+    }
+    const story = nextQueuedStory(app.db, identity.userId);
+    return reply.send({story: story ?? null});
   });
 }

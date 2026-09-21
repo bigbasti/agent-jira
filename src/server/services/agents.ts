@@ -5,8 +5,8 @@ import type {Database} from '../db/index.js';
 import {agents, oauthTokens, stories, storyUpdates} from '../db/schema.js';
 import type {EventHub} from '../events/hub.js';
 import {MAX_AGENT_NAME_LENGTH, sanitiseAgentName} from '../oauth/authorize.js';
-import {NotFoundError} from './projects.js';
-import {getStory} from './stories.js';
+import {listProjects, NotFoundError} from './projects.js';
+import {getStory, listStories} from './stories.js';
 import {rankBetween} from '../../shared/rank.js';
 import type {Agent, AgentStatus} from '../../shared/types.js';
 
@@ -195,4 +195,44 @@ export function revokeAgent(db: Database, hub: EventHub, userId: string, agentId
     hub.publish(userId, {type: 'story.updated', story: getStory(db, userId, releasedStoryId)});
   }
   hub.publish(userId, {type: 'agent.deleted', id: agentId});
+}
+
+/** What the host runner needs to cold-start an agent on one story. */
+export interface QueuedStory {
+  id: string;
+  title: string;
+  projectPath: string;
+}
+
+/**
+ * The oldest played story `userId` has waiting for an agent to pick up: in `todo`,
+ * unblocked, and not already claimed. This is the cold-start counterpart to the MCP
+ * `wait_for_work` long-poll — where that tool answers an agent that is already parked and
+ * connected, this is what the host runner script polls when *no* agent is running at all,
+ * so it knows what to launch and where.
+ *
+ * Ties in `playRequestedAt` (a played-but-not-yet-picked-up backlog) resolve oldest first,
+ * same as any other queue: the story a human has been waiting longest on goes first.
+ */
+export function nextQueuedStory(db: Database, userId: string): QueuedStory | undefined {
+  const queued = listStories(db, userId)
+    .filter(
+      story =>
+        story.status === 'todo' &&
+        story.playRequestedAt !== null &&
+        story.blockedBy.length === 0 &&
+        story.claimedByAgentId === null,
+    )
+    .sort((a, b) => (a.playRequestedAt ?? 0) - (b.playRequestedAt ?? 0));
+
+  const story = queued[0];
+  if (!story) return undefined;
+
+  // The FK from stories.project_id guarantees this project exists; `find` over
+  // `listProjects` reuses the same userId-scoped read the rest of the service layer uses
+  // rather than a bespoke lookup for one field.
+  const project = listProjects(db, userId).find(candidate => candidate.id === story.projectId);
+  if (!project) return undefined;
+
+  return {id: story.id, title: story.title, projectPath: project.path};
 }
