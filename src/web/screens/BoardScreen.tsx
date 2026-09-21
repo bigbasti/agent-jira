@@ -1,4 +1,4 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import type {Story, User} from '../../shared/types.js';
 import {AgentStrip} from '../components/board/AgentStrip.js';
 import {Board} from '../components/board/Board.js';
@@ -8,6 +8,7 @@ import {Button} from '../components/ui/Button.js';
 import {StoryDetailDialog} from '../components/story/StoryDetailDialog.js';
 import {StoryFormDialog} from '../components/story/StoryFormDialog.js';
 import {useBoard, useDeleteStory, useMoveStory} from '../lib/board-queries.js';
+import {useLiveBoard} from '../lib/useLiveBoard.js';
 import {useLogout} from '../lib/queries.js';
 
 /** Task 14 replaces these with the play/stop mutations and the connect-agent dialog. */
@@ -18,10 +19,19 @@ export function BoardScreen({user}: {user: User}) {
   const move = useMoveStory();
   const deleteStory = useDeleteStory();
   const logout = useLogout();
+  const live = useLiveBoard();
 
   const [creatingStory, setCreatingStory] = useState(false);
   const [editingStory, setEditingStory] = useState<Story | null>(null);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
+
+  // "Reconnecting…" only means something once a first connection has actually happened —
+  // without this, the socket's brief moment of not-yet-open on mount would flash the same
+  // label the board shows after a real drop.
+  const [everConnected, setEverConnected] = useState(false);
+  useEffect(() => {
+    if (live.connected) setEverConnected(true);
+  }, [live.connected]);
 
   const actions = useMemo<StoryActions>(
     () => ({
@@ -40,7 +50,9 @@ export function BoardScreen({user}: {user: User}) {
     <div className="flex h-dvh flex-col overflow-hidden">
       <TopBar
         email={user.email}
-        status={board.isPending ? 'Loading the board…' : ''}
+        status={
+          board.isPending ? 'Loading the board…' : everConnected && !live.connected ? 'Reconnecting…' : ''
+        }
         onNewStory={() => setCreatingStory(true)}
         onConnectAgent={notWiredYet}
         onLogout={() => logout.mutate()}

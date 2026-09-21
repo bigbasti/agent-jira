@@ -90,6 +90,22 @@ describe('StoryFormDialog — create', () => {
     expect(fetchMock).not.toHaveBeenCalledWith('/api/stories', expect.anything());
   });
 
+  it('focuses the inline new-project form when submitted with no project chosen', async () => {
+    // The Select that a "project" rejection normally focuses is unmounted while the
+    // inline form is open — focus must land in the form that's actually on screen.
+    const user = userEvent.setup();
+    renderDialog(<StoryFormDialog mode="create" open onOpenChange={() => {}} />);
+
+    await user.type(screen.getByLabelText('Title'), 'New story');
+    await user.click(screen.getByRole('combobox', {name: 'Project'}));
+    await user.click(await screen.findByRole('option', {name: '+ New project'}));
+    expect(await screen.findByLabelText('Project name')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: 'Add to draft'}));
+
+    await waitFor(() => expect(screen.getByLabelText('Project name')).toHaveFocus());
+  });
+
   it('creates a project inline and selects it', async () => {
     const created = makeProject({id: 'p3', name: 'brand-new'});
     const user = userEvent.setup();

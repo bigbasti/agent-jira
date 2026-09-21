@@ -54,6 +54,9 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
 
   const titleRef = useRef<HTMLInputElement>(null);
   const projectSelectRef = useRef<HTMLButtonElement>(null);
+  // Where a "project" rejection sends focus when the inline "new project" form is open —
+  // the Select it would otherwise focus is unmounted at that point.
+  const newProjectNameRef = useRef<HTMLInputElement>(null);
   const formId = useId();
   const descriptionId = `${formId}-description`;
 
@@ -99,7 +102,12 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
   function reject(field: Field, message: string) {
     setFieldError({field, message});
     if (field === 'title') titleRef.current?.focus();
-    else if (field === 'project') projectSelectRef.current?.focus();
+    else if (field === 'project') {
+      // The Select is unmounted while the inline form is open, so `projectSelectRef` is
+      // null then — send focus into the form that's actually on screen instead.
+      if (creatingProject) newProjectNameRef.current?.focus();
+      else projectSelectRef.current?.focus();
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -152,7 +160,11 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
 
         <div className="flex flex-col gap-1.5">
           {creatingProject ? (
-            <ProjectCreateInline onCreated={handleProjectCreated} onCancel={() => setCreatingProject(false)} />
+            <ProjectCreateInline
+              nameInputRef={newProjectNameRef}
+              onCreated={handleProjectCreated}
+              onCancel={() => setCreatingProject(false)}
+            />
           ) : (
             <Select
               ref={projectSelectRef}

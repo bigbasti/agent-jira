@@ -1,4 +1,4 @@
-import {useRef, useState, type KeyboardEvent} from 'react';
+import {useRef, useState, type KeyboardEvent, type RefObject} from 'react';
 import type {Project} from '../../../shared/types.js';
 import {ApiError} from '../../lib/api.js';
 import {useCreateProject} from '../../lib/board-queries.js';
@@ -8,6 +8,13 @@ import {Input} from '../ui/Input.js';
 export interface ProjectCreateInlineProps {
   onCreated: (project: Project) => void;
   onCancel: () => void;
+  /**
+   * `StoryFormDialog` writes its own name-input ref here (alongside the internal one this
+   * component uses for its own validation) so it has somewhere to send focus when *its*
+   * submit is rejected for a missing project while this form is open — at that moment the
+   * project `Select` it would otherwise focus is unmounted.
+   */
+  nameInputRef?: RefObject<HTMLInputElement | null>;
 }
 
 type Field = 'name' | 'path';
@@ -28,7 +35,7 @@ function isAbsolutePath(path: string): boolean {
  * Enter keystroke here submit the outer story form instead of creating the project).
  * Enter is handled directly on the field group.
  */
-export function ProjectCreateInline({onCreated, onCancel}: ProjectCreateInlineProps) {
+export function ProjectCreateInline({onCreated, onCancel, nameInputRef}: ProjectCreateInlineProps) {
   const [name, setName] = useState('');
   const [path, setPath] = useState('');
   const [fieldError, setFieldError] = useState<{field: Field; message: string} | null>(null);
@@ -82,7 +89,10 @@ export function ProjectCreateInline({onCreated, onCancel}: ProjectCreateInlinePr
       className="flex flex-col gap-3 rounded-well border border-hairline-strong bg-well/50 p-3"
     >
       <Input
-        ref={fields.name}
+        ref={node => {
+          fields.name.current = node;
+          if (nameInputRef) nameInputRef.current = node;
+        }}
         label="Project name"
         autoFocus
         value={name}

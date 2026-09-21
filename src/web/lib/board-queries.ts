@@ -131,8 +131,12 @@ export interface StoryFormInput {
   dependsOn: string[];
 }
 
-/** Patches one story into the cached board snapshot, replacing it if already present. */
-function upsertStory(client: ReturnType<typeof useQueryClient>, story: Story): void {
+/**
+ * Patches one story into the cached board snapshot, replacing it if already present.
+ * Exported so `useLiveBoard` (Task 11) can apply `story.created`/`story.updated`/
+ * `story.moved` events through the exact same surgical patch the mutations use.
+ */
+export function upsertStory(client: ReturnType<typeof useQueryClient>, story: Story): void {
   client.setQueryData<BoardSnapshot>(BOARD_KEY, board => {
     if (!board) return board;
     const exists = board.stories.some(candidate => candidate.id === story.id);
