@@ -20,7 +20,7 @@ describe('stories', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: `/Users/dev/${email}`},
+      payload: {name: 'agent-kanban', path: `/Users/dev/${email}`},
     });
     return {cookie, user, projectId: res.json().id as string};
   }

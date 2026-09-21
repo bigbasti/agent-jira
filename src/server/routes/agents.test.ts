@@ -49,7 +49,7 @@ describe('agents', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/agent-kanban'},
     });
     expect(projectRes.statusCode).toBe(201);
     const projectId = projectRes.json().id as string;

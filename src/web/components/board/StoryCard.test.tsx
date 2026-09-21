@@ -28,12 +28,12 @@ function renderCard(story: Story, extra: {projectName?: string; agentName?: stri
 describe('StoryCard', () => {
   it('shows title, model and project', () => {
     renderCard(makeStory({id: 's1', title: 'Wire the board', model: 'claude-opus-5'}), {
-      projectName: 'agent-jira',
+      projectName: 'agent-kanban',
     });
 
     expect(screen.getByText('Wire the board')).toBeInTheDocument();
     expect(screen.getByText('Claude Opus 5')).toBeInTheDocument();
-    expect(screen.getByText('agent-jira')).toBeInTheDocument();
+    expect(screen.getByText('agent-kanban')).toBeInTheDocument();
   });
 
   it('falls back to the raw model id when the model is not one we know', () => {

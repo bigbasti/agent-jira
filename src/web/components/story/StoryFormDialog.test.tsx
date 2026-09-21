@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 const BOARD = makeBoard({
-  projects: [makeProject({id: 'p1', name: 'agent-jira'}), makeProject({id: 'p2', name: 'other-repo'})],
+  projects: [makeProject({id: 'p1', name: 'agent-kanban'}), makeProject({id: 'p2', name: 'other-repo'})],
   stories: [
     makeStory({id: 's1', title: 'Wire the board', status: 'todo'}),
     makeStory({id: 's2', title: 'Ship the CLI', status: 'finished'}),
@@ -193,7 +193,7 @@ describe('StoryFormDialog — edit', () => {
     expect(screen.getByRole('button', {name: 'Save'})).toBeInTheDocument();
     expect(screen.getByLabelText('Title')).toHaveValue('Wire the board');
     expect(screen.getByLabelText('Description')).toHaveValue('Hook up drag and drop.');
-    expect(screen.getByRole('combobox', {name: 'Project'})).toHaveTextContent('agent-jira');
+    expect(screen.getByRole('combobox', {name: 'Project'})).toHaveTextContent('agent-kanban');
   });
 
   it('sends a PATCH with the edited fields', async () => {

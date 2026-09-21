@@ -7,7 +7,7 @@ import {registerTools, type McpContext} from './tools.js';
 
 export type {McpContext} from './tools.js';
 
-const SERVER_NAME = 'agent-jira';
+const SERVER_NAME = 'agent-kanban';
 const SERVER_VERSION = '0.1.0';
 
 /** The board, as a resource — the same snapshot `get_board` returns. */

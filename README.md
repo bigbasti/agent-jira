@@ -1,4 +1,4 @@
-# agent-jira
+# agent-kanban
 
 A kanban board for work done by AI coding agents. You write stories, drag them into
 `To do`, and a Claude Code (or any MCP-capable) agent connected to the board picks them
@@ -15,8 +15,8 @@ host runner script, how the board works, and running it for development.
 You need Docker and Docker Compose (`docker compose version`).
 
 ```bash
-git clone <this repo> agent-jira
-cd agent-jira
+git clone <this repo> agent-kanban
+cd agent-kanban
 cp .env.example .env
 ```
 
@@ -37,7 +37,7 @@ docker compose up -d
 Open http://localhost:3000, register an account, and you're looking at an empty board.
 The image bundles everything: the API, the WebSocket that keeps the board live, the MCP
 server agents connect to, and the built frontend, all served by one process on port 3000.
-Data lives in the `agent-jira-data` named volume, so it survives `docker compose down` (but
+Data lives in the `agent-kanban-data` named volume, so it survives `docker compose down` (but
 not `docker compose down -v` — see [Backups](#backups)).
 
 ## Connecting an agent
@@ -45,7 +45,7 @@ not `docker compose down -v` — see [Backups](#backups)).
 Point Claude Code's MCP client at the server:
 
 ```bash
-claude mcp add --transport http agent-jira http://localhost:3000/mcp
+claude mcp add --transport http agent-kanban http://localhost:3000/mcp
 ```
 
 The first tool call opens a browser window at this server's sign-in page (bring your own —
@@ -78,9 +78,9 @@ clear message, rather than a cryptic failure on its first poll, if either is mis
 1. Copy the example config and lock it down — it will hold a live bearer credential:
 
    ```bash
-   mkdir -p ~/.agent-jira
-   cp scripts/runner.example.json ~/.agent-jira/runner.json
-   chmod 600 ~/.agent-jira/runner.json
+   mkdir -p ~/.agent-kanban
+   cp scripts/runner.example.json ~/.agent-kanban/runner.json
+   chmod 600 ~/.agent-kanban/runner.json
    ```
 
 2. Fill in a token. `runner.json`'s `"token"` is the same kind of bearer credential an
@@ -106,7 +106,7 @@ clear message, rather than a cryptic failure on its first poll, if either is mis
    #    be a loopback address — nothing needs to be listening on it.
    CLIENT_ID=$(curl -fsS -X POST "$BASE/oauth/register" \
      -H 'content-type: application/json' \
-     -d '{"client_name":"agent-jira runner","redirect_uris":["http://127.0.0.1:8945/callback"]}' \
+     -d '{"client_name":"agent-kanban runner","redirect_uris":["http://127.0.0.1:8945/callback"]}' \
      | jq -r .client_id)
    VERIFIER=$(openssl rand -base64 96 | tr -d '=+/\n' | cut -c1-64)
    CHALLENGE=$(printf '%s' "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 | tr '+/' '-_' | tr -d '=\n')
@@ -149,10 +149,10 @@ clear message, rather than a cryptic failure on its first poll, if either is mis
    immediately is treated as a crash rather than finished work and backs off the same
    way, so a broken `claude` invocation can't spin in a restart loop. Leave it running in
    a terminal (or under `tmux`, a `launchd` agent, or a `systemd --user` unit) on
-   whatever machine should cold-start agents. `AGENT_JIRA_CONFIG` overrides the config
-   path (default `~/.agent-jira/runner.json`); `AGENT_JIRA_LAUNCH_CMD` overrides the
+   whatever machine should cold-start agents. `AGENT_KANBAN_CONFIG` overrides the config
+   path (default `~/.agent-kanban/runner.json`); `AGENT_KANBAN_LAUNCH_CMD` overrides the
    launch command (default `claude`) — handy for a dry run, e.g.
-   `AGENT_JIRA_LAUNCH_CMD=echo scripts/agent-runner.sh` to see the command it would have
+   `AGENT_KANBAN_LAUNCH_CMD=echo scripts/agent-runner.sh` to see the command it would have
    run without starting a real agent.
 
    The token is passed to `curl` as a header argument, which means it's visible to
@@ -206,7 +206,7 @@ platform provides) sits in front of this container and terminates TLS. Two setti
 for that:
 
 - **`PUBLIC_URL`** — set this to the externally reachable URL the proxy answers to, e.g.
-  `https://agent-jira.example.com`. This is the one thing the server uses to build its
+  `https://agent-kanban.example.com`. This is the one thing the server uses to build its
   OAuth metadata and the MCP URL it tells agents to use; get it wrong and `claude mcp add`
   will be handed a URL nobody outside the container can reach.
 - **`TRUST_PROXY`** — set to `true` once you actually have a reverse proxy in front of the
@@ -237,13 +237,13 @@ An nginx `location` block, for reference:
 
 ```nginx
 location / {
-    proxy_pass http://agent-jira:3000;
+    proxy_pass http://agent-kanban:3000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
 location /ws {
-    proxy_pass http://agent-jira:3000;
+    proxy_pass http://agent-kanban:3000;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -254,15 +254,15 @@ location /ws {
 ## Backups
 
 Everything — accounts, projects, stories, agent credentials — lives in one SQLite file at
-`/data/agent-jira.db` inside the `agent-jira-data` volume (plus its `-wal`/`-shm`
+`/data/agent-kanban.db` inside the `agent-kanban-data` volume (plus its `-wal`/`-shm`
 sidecars, since the database runs in WAL mode). The simplest reliable backup is a tar of
 the whole volume:
 
 ```bash
 docker run --rm \
-  -v agent-jira_agent-jira-data:/data \
+  -v agent-kanban_agent-kanban-data:/data \
   -v "$(pwd)":/backup \
-  alpine tar czf /backup/agent-jira-backup.tar.gz -C /data .
+  alpine tar czf /backup/agent-kanban-backup.tar.gz -C /data .
 ```
 
 (Adjust the volume name if you changed the project/service name — check `docker volume
@@ -271,9 +271,9 @@ state, though WAL mode makes that unlikely to matter. Restore by reversing the t
 
 ```bash
 docker run --rm \
-  -v agent-jira_agent-jira-data:/data \
+  -v agent-kanban_agent-kanban-data:/data \
   -v "$(pwd)":/backup \
-  alpine sh -c "rm -rf /data/* && tar xzf /backup/agent-jira-backup.tar.gz -C /data"
+  alpine sh -c "rm -rf /data/* && tar xzf /backup/agent-kanban-backup.tar.gz -C /data"
 ```
 
 ## Local development
@@ -293,9 +293,9 @@ This runs the API (`tsx watch`, auto-restarting on server changes) and Vite's de
 side by side; Vite proxies `/api`, `/ws`, `/oauth` and `/.well-known` to the API so the
 whole app — board and OAuth consent screen included — works at http://localhost:5173
 without a build. `npm run dev` points `PUBLIC_URL` at that origin too, so connect an agent
-in dev with `claude mcp add --transport http agent-jira http://localhost:5173/mcp` — not
+in dev with `claude mcp add --transport http agent-kanban http://localhost:5173/mcp` — not
 `:3000`, where there is no consent screen to send you to. SQLite migrations run automatically at boot against
-`DATABASE_PATH` (`./data/agent-jira.db` by default).
+`DATABASE_PATH` (`./data/agent-kanban.db` by default).
 
 Other useful scripts:
 
@@ -317,11 +317,11 @@ npm run smoke        # scripts/smoke-test.sh, against the Compose stack
 To try the actual container locally without going through Compose:
 
 ```bash
-docker build -t agent-jira .
+docker build -t agent-kanban .
 docker run --rm -p 3000:3000 \
   -e SESSION_SECRET=$(openssl rand -hex 32) \
-  -v agent-jira-data:/data \
-  agent-jira
+  -v agent-kanban-data:/data \
+  agent-kanban
 ```
 
 `scripts/smoke-test.sh` (or `npm run smoke`) builds the Compose stack, waits for it to come

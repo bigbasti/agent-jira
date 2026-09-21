@@ -2,7 +2,7 @@ import {useSyncExternalStore} from 'react';
 
 export type Theme = 'dark' | 'light';
 
-const STORAGE_KEY = 'agent-jira:theme';
+const STORAGE_KEY = 'agent-kanban:theme';
 const listeners = new Set<() => void>();
 
 function stored(): Theme | null {

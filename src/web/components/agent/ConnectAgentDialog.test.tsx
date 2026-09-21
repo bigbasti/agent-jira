@@ -28,7 +28,7 @@ describe('ConnectAgentDialog', () => {
   it('shows the copyable claude mcp add command', () => {
     renderDialog();
 
-    expect(screen.getByText(`claude mcp add --transport http agent-jira ${MCP_URL}`)).toBeInTheDocument();
+    expect(screen.getByText(`claude mcp add --transport http agent-kanban ${MCP_URL}`)).toBeInTheDocument();
   });
 
   it('copies the command to the clipboard', async () => {
@@ -42,7 +42,7 @@ describe('ConnectAgentDialog', () => {
 
     await user.click(screen.getByRole('button', {name: 'Copy'}));
 
-    expect(writeText).toHaveBeenCalledWith(`claude mcp add --transport http agent-jira ${MCP_URL}`);
+    expect(writeText).toHaveBeenCalledWith(`claude mcp add --transport http agent-kanban ${MCP_URL}`);
     expect(await screen.findByRole('button', {name: 'Copied'})).toBeInTheDocument();
   });
 
@@ -95,7 +95,7 @@ describe('ConnectAgentDialog', () => {
     mockFetch();
     renderWithClient(<ConnectAgentDialog open onOpenChange={() => {}} agents={[]} />);
 
-    expect(screen.queryByText(/claude mcp add --transport http agent-jira\s*$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/claude mcp add --transport http agent-kanban\s*$/)).not.toBeInTheDocument();
   });
 
   it('shows an error with a retry action when config fails to load, instead of loading forever', () => {

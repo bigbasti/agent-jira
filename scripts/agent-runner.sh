@@ -9,9 +9,9 @@
 # pick it up. See README.md's "Host runner" section for setup.
 set -euo pipefail
 
-CONFIG="${AGENT_JIRA_CONFIG:-$HOME/.agent-jira/runner.json}"
-# Override to stub the launch when testing this script, e.g. AGENT_JIRA_LAUNCH_CMD=echo.
-LAUNCH_CMD="${AGENT_JIRA_LAUNCH_CMD:-claude}"
+CONFIG="${AGENT_KANBAN_CONFIG:-$HOME/.agent-kanban/runner.json}"
+# Override to stub the launch when testing this script, e.g. AGENT_KANBAN_LAUNCH_CMD=echo.
+LAUNCH_CMD="${AGENT_KANBAN_LAUNCH_CMD:-claude}"
 
 # Ceiling for the poll-failure backoff (server down, network blip, expired token).
 MAX_BACKOFF_SECONDS=300
@@ -55,7 +55,7 @@ fi
 # It is only ever placed in the Authorization header below — never echoed, logged, or
 # put anywhere a `ps` from another user on the same box could read it.
 
-log "agent-jira runner watching $BASE_URL every ${INTERVAL}s"
+log "agent-kanban runner watching $BASE_URL every ${INTERVAL}s"
 
 poll_failures=0
 backoff_until=0
@@ -108,7 +108,7 @@ while true; do
     # launch its own agent on the same story too — this script assumes exactly one
     # instance runs per account.
     START=$(date +%s)
-    if (cd "$DIR" && "$LAUNCH_CMD" -p "Connect to the agent-jira MCP server, claim story $STORY_ID, and implement it following the server's instructions exactly."); then
+    if (cd "$DIR" && "$LAUNCH_CMD" -p "Connect to the agent-kanban MCP server, claim story $STORY_ID, and implement it following the server's instructions exactly."); then
       log "agent for $STORY_ID finished"
     else
       log "agent for $STORY_ID exited with an error"

@@ -22,7 +22,7 @@ const STORY = makeStory({
 });
 
 const BOARD = makeBoard({
-  projects: [makeProject({id: 'p1', name: 'agent-jira', path: '/srv/agent-jira'})],
+  projects: [makeProject({id: 'p1', name: 'agent-kanban', path: '/srv/agent-kanban'})],
   stories: [STORY],
 });
 
@@ -64,7 +64,7 @@ describe('StoryDetailDialog', () => {
   it('shows the project path in monospace', () => {
     renderDetail([]);
 
-    const path = screen.getByText('/srv/agent-jira');
+    const path = screen.getByText('/srv/agent-kanban');
     expect(path).toHaveClass('font-mono');
   });
 

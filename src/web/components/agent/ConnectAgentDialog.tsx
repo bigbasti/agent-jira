@@ -22,7 +22,7 @@ export interface ConnectAgentDialogProps {
 const COPIED_TIMEOUT_MS = 2000;
 
 function connectCommand(mcpUrl: string): string {
-  return `claude mcp add --transport http agent-jira ${mcpUrl}`;
+  return `claude mcp add --transport http agent-kanban ${mcpUrl}`;
 }
 
 const SECTION_HEADING = 'text-label font-medium text-muted';

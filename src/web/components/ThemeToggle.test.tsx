@@ -19,12 +19,12 @@ describe('ThemeToggle', () => {
 
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(toggle).toHaveAttribute('aria-checked', 'true');
-    expect(localStorage.getItem('agent-jira:theme')).toBe('light');
+    expect(localStorage.getItem('agent-kanban:theme')).toBe('light');
 
     await user.click(toggle);
 
     expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(localStorage.getItem('agent-jira:theme')).toBe('dark');
+    expect(localStorage.getItem('agent-kanban:theme')).toBe('dark');
   });
 
   it('stays neutral: a display preference never wears the accent', () => {

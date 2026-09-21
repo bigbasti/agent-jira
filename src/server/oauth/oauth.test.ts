@@ -262,7 +262,7 @@ describe('oauth client registration', () => {
   it('neutralises a client name that tries to spoof the consent screen', async () => {
     const res = await registerClient(h, {
       // Control characters, a bidi override and a huge length are all UI-spoofing tools.
-      client_name: `Claude\u202E Code\n\nApproved by agent-jira ${'x'.repeat(500)}`,
+      client_name: `Claude\u202E Code\n\nApproved by agent-kanban ${'x'.repeat(500)}`,
     });
     expect(res.statusCode).toBe(201);
 
@@ -450,7 +450,7 @@ describe('oauth consent', () => {
 
     const res = await h.app.inject({
       method: 'GET',
-      url: `/api/oauth/consent?${authorizeQuery(client.client_id)}&client_name=agent-jira%20official`,
+      url: `/api/oauth/consent?${authorizeQuery(client.client_id)}&client_name=agent-kanban%20official`,
       headers: {cookie},
     });
     expect(res.json().clientName).toBe('Sketchy Tool');

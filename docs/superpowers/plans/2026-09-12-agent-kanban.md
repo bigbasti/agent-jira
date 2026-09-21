@@ -1,4 +1,4 @@
-# agent-jira Implementation Plan
+# agent-kanban Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 22 · TypeScript (ESM) · Fastify 5 · better-sqlite3 · Drizzle ORM + drizzle-kit · @modelcontextprotocol/sdk · React 19 · Vite 6 · TanStack Query · @dnd-kit · Tailwind v4 · Radix UI · Vitest
 
-**Spec:** `docs/superpowers/specs/2026-09-12-agent-jira-design.md`
+**Spec:** `docs/superpowers/specs/2026-09-12-agent-kanban-design.md`
 
 ## Global Constraints
 
@@ -49,7 +49,7 @@
 
 ```json
 {
-  "name": "agent-jira",
+  "name": "agent-kanban",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -173,7 +173,7 @@ export const STATUS_LABELS: Record<Status, string> = {
 
 - [ ] **Step 6: Implement `config.ts`, `app.ts`, `index.ts`**
 
-`loadConfig` reads `PORT` (default 3000), `DATABASE_PATH` (default `./data/agent-jira.db`), `SESSION_SECRET` (**throws** if missing or shorter than 32 chars when `NODE_ENV === 'production'`; in dev falls back to a fixed dev secret), `PUBLIC_URL` (default `http://localhost:${port}`).
+`loadConfig` reads `PORT` (default 3000), `DATABASE_PATH` (default `./data/agent-kanban.db`), `SESSION_SECRET` (**throws** if missing or shorter than 32 chars when `NODE_ENV === 'production'`; in dev falls back to a fixed dev secret), `PUBLIC_URL` (default `http://localhost:${port}`).
 
 `buildApp` creates a Fastify instance, registers `/api/health` returning `{status: 'ok', version}`, and stores `db` on `app.decorate('db', db)`.
 
@@ -189,7 +189,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -A && git commit -m "chore: scaffold agent-jira with fastify, vite and vitest"
+git add -A && git commit -m "chore: scaffold agent-kanban with fastify, vite and vitest"
 ```
 
 ---
@@ -589,9 +589,9 @@ describe('projects', () => {
   it('creates a project with a name and an absolute path', async () => {
     const {app, register} = h; const {cookie} = await register();
     const res = await app.inject({method: 'POST', url: '/api/projects', headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'}});
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'}});
     expect(res.statusCode).toBe(201);
-    expect(res.json()).toMatchObject({name: 'agent-jira', path: '/Users/dev/git/agent-jira'});
+    expect(res.json()).toMatchObject({name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'});
   });
   it('rejects a relative path', async () => { /* path: 'relative/dir' => 400 */ });
   it('rejects an empty name', async () => { /* => 400 */ });
@@ -1049,7 +1049,7 @@ it('shows the full mcp url from server config', () => {
   render(<ConnectAgentDialog open config={{mcpUrl: 'https://board.example/mcp'}} agents={[]} />);
   expect(screen.getByText('https://board.example/mcp')).toBeInTheDocument();
 });
-it('shows the copyable claude mcp add command', () => { /* contains 'claude mcp add --transport http agent-jira' */ });
+it('shows the copyable claude mcp add command', () => { /* contains 'claude mcp add --transport http agent-kanban' */ });
 it('copies the command to the clipboard', async () => { /* mock navigator.clipboard, assert writeText */ });
 it('lists connected agents with a revoke button', () => { /* … */ });
 it('explains the consent step', () => { /* text mentions browser + Allow */ });
@@ -1088,7 +1088,7 @@ git add -A && git commit -m "feat: add agent presence, connect dialog and play/s
 
 **Interfaces:**
 - Consumes: `npm run build`, `npm start`.
-- Produces: a working `docker compose up -d` deployment on port 3000 with a `agent-jira-data` volume.
+- Produces: a working `docker compose up -d` deployment on port 3000 with a `agent-kanban-data` volume.
 
 - [ ] **Step 1: Write the failing smoke test**
 
@@ -1147,19 +1147,19 @@ CMD ["node", "dist/server/index.js"]
 
 ```yaml
 services:
-  agent-jira:
+  agent-kanban:
     build: .
-    image: agent-jira:latest
+    image: agent-kanban:latest
     restart: unless-stopped
     ports: ["${PORT:-3000}:3000"]
     environment:
       NODE_ENV: production
-      DATABASE_PATH: /data/agent-jira.db
+      DATABASE_PATH: /data/agent-kanban.db
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
-    volumes: ["agent-jira-data:/data"]
+    volumes: ["agent-kanban-data:/data"]
 volumes:
-  agent-jira-data:
+  agent-kanban-data:
 ```
 
 - [ ] **Step 5: Serve the SPA in production**
@@ -1173,7 +1173,7 @@ Expected: `smoke test passed`
 
 - [ ] **Step 7: Write the README and commit**
 
-README covers: what it is, a 60-second quickstart (`cp .env.example .env`, generate a secret with `openssl rand -hex 32`, `docker compose up -d`), connecting an agent (`claude mcp add --transport http agent-jira http://localhost:3000/mcp` + the consent flow), the board workflow, deploying behind a reverse proxy (set `PUBLIC_URL`, forward `/ws` and `/mcp`), backups (copy the volume's `.db`), and local development.
+README covers: what it is, a 60-second quickstart (`cp .env.example .env`, generate a secret with `openssl rand -hex 32`, `docker compose up -d`), connecting an agent (`claude mcp add --transport http agent-kanban http://localhost:3000/mcp` + the consent flow), the board workflow, deploying behind a reverse proxy (set `PUBLIC_URL`, forward `/ws` and `/mcp`), backups (copy the volume's `.db`), and local development.
 
 ```bash
 git add -A && git commit -m "feat: containerize with docker compose deployment"
@@ -1210,11 +1210,11 @@ it('never returns another user\'s story', async () => { /* … */ });
 #!/usr/bin/env bash
 # scripts/agent-runner.sh — cold-starts a Claude Code agent when a story is played.
 set -euo pipefail
-CONFIG="${AGENT_JIRA_CONFIG:-$HOME/.agent-jira/runner.json}"
+CONFIG="${AGENT_KANBAN_CONFIG:-$HOME/.agent-kanban/runner.json}"
 [ -f "$CONFIG" ] || { echo "missing config: $CONFIG (see scripts/runner.example.json)" >&2; exit 1; }
 BASE_URL=$(jq -r .baseUrl "$CONFIG"); TOKEN=$(jq -r .token "$CONFIG")
 INTERVAL=$(jq -r '.pollSeconds // 10' "$CONFIG")
-echo "agent-jira runner watching $BASE_URL every ${INTERVAL}s"
+echo "agent-kanban runner watching $BASE_URL every ${INTERVAL}s"
 while true; do
   RESP=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/runner/queued" || echo '{}')
   STORY_ID=$(printf '%s' "$RESP" | jq -r '.story.id // empty')
@@ -1222,7 +1222,7 @@ while true; do
     DIR=$(printf '%s' "$RESP" | jq -r '.story.projectPath')
     TITLE=$(printf '%s' "$RESP" | jq -r '.story.title')
     echo "==> launching agent for: $TITLE ($STORY_ID) in $DIR"
-    (cd "$DIR" && claude -p "Connect to the agent-jira MCP server, claim story $STORY_ID, and implement it following the server's instructions exactly.")
+    (cd "$DIR" && claude -p "Connect to the agent-kanban MCP server, claim story $STORY_ID, and implement it following the server's instructions exactly.")
   fi
   sleep "$INTERVAL"
 done

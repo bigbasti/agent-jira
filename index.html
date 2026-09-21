@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <title>agent-jira</title>
+    <title>agent-kanban</title>
     <!--
       The two colours below are --canvas from src/web/styles/tokens.css, duplicated because
       they have to paint before the bundle loads. Change them together.
@@ -21,7 +21,7 @@
       // Resolve the theme before first paint so the canvas never flashes the wrong one.
       (function () {
         try {
-          var stored = localStorage.getItem('agent-jira:theme');
+          var stored = localStorage.getItem('agent-kanban:theme');
           var theme =
             stored === 'light' || stored === 'dark'
               ? stored

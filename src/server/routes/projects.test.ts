@@ -15,10 +15,10 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json()).toMatchObject({name: 'agent-jira', path: '/Users/dev/git/agent-jira'});
+    expect(res.json()).toMatchObject({name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'});
   });
 
   it('rejects a relative path', async () => {
@@ -27,7 +27,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: 'relative/dir'},
+      payload: {name: 'agent-kanban', path: 'relative/dir'},
     });
     expect(res.statusCode).toBe(400);
   });
@@ -38,10 +38,10 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: 'C:\\dev\\agent-jira'},
+      payload: {name: 'agent-kanban', path: 'C:\\dev\\agent-kanban'},
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json()).toMatchObject({name: 'agent-jira', path: 'C:\\dev\\agent-jira'});
+    expect(res.json()).toMatchObject({name: 'agent-kanban', path: 'C:\\dev\\agent-kanban'});
   });
 
   it('rejects a bare "/" path (no path segment)', async () => {
@@ -50,7 +50,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/'},
+      payload: {name: 'agent-kanban', path: '/'},
     });
     expect(res.statusCode).toBe(400);
   });
@@ -61,7 +61,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/\0evil'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/\0evil'},
     });
     expect(res.statusCode).toBe(400);
   });
@@ -72,7 +72,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: '   ', path: '/Users/dev/git/agent-jira'},
+      payload: {name: '   ', path: '/Users/dev/git/agent-kanban'},
     });
     expect(res.statusCode).toBe(400);
   });
@@ -149,7 +149,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     const {id} = created.json();
 
@@ -160,7 +160,7 @@ describe('projects', () => {
       payload: {name: 'renamed'},
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({id, name: 'renamed', path: '/Users/dev/git/agent-jira'});
+    expect(res.json()).toMatchObject({id, name: 'renamed', path: '/Users/dev/git/agent-kanban'});
   });
 
   it('rejects an empty PATCH body (nothing to update)', async () => {
@@ -169,7 +169,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     const {id} = created.json();
 
@@ -183,7 +183,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     const {id: projectId} = created.json();
 
@@ -216,7 +216,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     const {id} = created.json();
 
@@ -273,7 +273,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     expect(res.statusCode).toBe(201);
 
@@ -287,7 +287,7 @@ describe('projects', () => {
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path: '/Users/dev/git/agent-jira'},
+      payload: {name: 'agent-kanban', path: '/Users/dev/git/agent-kanban'},
     });
     const {id} = created.json();
 

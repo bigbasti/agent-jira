@@ -22,7 +22,7 @@ export class NotFoundError extends Error {
 // caller to guard against — so at least one real path segment is required past the
 // root. A NUL byte is rejected outright since it can truncate the path in underlying
 // C-level filesystem calls, silently pointing the agent somewhere other than intended.
-const absolutePath = z
+export const absolutePath = z
   .string()
   .trim()
   .min(1)
@@ -87,6 +87,58 @@ export function createProject(db: Database, hub: EventHub, userId: string, input
   const project = toProject(row);
   hub.publish(userId, {type: 'project.changed'});
   return project;
+}
+
+/** The project an agent's directly-given task lands in when it has no directory at all. */
+export const AD_HOC_PROJECT_NAME = 'Ad-hoc';
+
+/** `path` without trailing separators, so `/code/app/` and `/code/app` are one directory. */
+function withoutTrailingSeparator(path: string): string {
+  return path.replace(/[\\/]+$/, '');
+}
+
+/** Whether `dir` is `root` itself or somewhere beneath it — never a sibling like `/code/app-two`. */
+function isWithin(dir: string, root: string): boolean {
+  return dir === root || dir.startsWith(`${root}/`) || dir.startsWith(`${root}\\`);
+}
+
+/**
+ * Finds the project a piece of work in `workingDirectory` belongs to, creating one if none
+ * does — for an agent that was handed a task directly and has no project id to give.
+ *
+ * The owning project is the unarchived one whose `path` is `workingDirectory` or one of its
+ * ancestors; when projects nest, the deepest wins, since it is the most specific claim on
+ * that directory. With no match, a project is created for the directory itself, named after
+ * its last segment — the human can rename it. With no directory at all, the work goes into
+ * the one shared `Ad-hoc` project, whose empty `path` says there is no directory to work in.
+ */
+export function resolveProjectForWork(
+  db: Database,
+  hub: EventHub,
+  userId: string,
+  workingDirectory: string | undefined,
+): Project {
+  const unarchived = listProjects(db, userId).filter(project => project.archivedAt === null);
+
+  if (workingDirectory === undefined) {
+    const adHoc = unarchived.find(project => project.name === AD_HOC_PROJECT_NAME && project.path === '');
+    if (adHoc) return adHoc;
+    // Inserted directly: `createProjectSchema` rightly refuses an empty path from a human,
+    // but here the emptiness is the point — this project has no directory.
+    const row = {id: nanoid(), userId, name: AD_HOC_PROJECT_NAME, path: '', createdAt: Date.now(), archivedAt: null};
+    db.insert(projects).values(row).run();
+    hub.publish(userId, {type: 'project.changed'});
+    return toProject(row);
+  }
+
+  const dir = withoutTrailingSeparator(absolutePath.parse(workingDirectory));
+  const owner = unarchived
+    .filter(project => project.path !== '' && isWithin(dir, withoutTrailingSeparator(project.path)))
+    .sort((a, b) => withoutTrailingSeparator(b.path).length - withoutTrailingSeparator(a.path).length)[0];
+  if (owner) return owner;
+
+  const name = dir.slice(Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\')) + 1);
+  return createProject(db, hub, userId, {name, path: dir});
 }
 
 /**

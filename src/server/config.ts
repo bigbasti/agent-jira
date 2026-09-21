@@ -35,7 +35,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port = parsedPort;
   }
 
-  const databasePath = env.DATABASE_PATH ?? './data/agent-jira.db';
+  const databasePath = env.DATABASE_PATH ?? './data/agent-kanban.db';
 
   const rawSessionSecret = env.SESSION_SECRET;
   const isMissingOrShort = !rawSessionSecret || rawSessionSecret.length < 32;

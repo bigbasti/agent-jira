@@ -4,7 +4,7 @@ import {nanoid} from 'nanoid';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {createHarness} from '../testing/harness.js';
-import {agents, oauthClients, stories, storyUpdates} from '../db/schema.js';
+import {agents, oauthClients, projects, stories, storyUpdates} from '../db/schema.js';
 import {issueTokens} from '../oauth/tokens.js';
 import {createProject} from '../services/projects.js';
 import {addUpdate, createStory, moveStory, requestPlay, requestStop} from '../services/stories.js';
@@ -39,7 +39,7 @@ describe('mcp server', () => {
   /** A registered user with one project — the minimum context a story needs. */
   async function seedUser(email = 'dev@example.com') {
     const {cookie, user} = await h.register(email);
-    const project = createProject(h.db, h.app.hub, user.id, {name: 'agent-jira', path: `/Users/dev/${user.id}`});
+    const project = createProject(h.db, h.app.hub, user.id, {name: 'agent-kanban', path: `/Users/dev/${user.id}`});
     return {cookie, user, project};
   }
 
@@ -598,19 +598,98 @@ describe('mcp server', () => {
       expect(agentRow(agentId).currentStoryId).toBeNull();
     });
 
-    it('requires a project and a title', async () => {
+    it('requires a title', async () => {
       const {user, project} = await seedUser();
       const {token} = seedAgent(user.id);
       const client = await connect(token);
 
-      const noProject = await call(client, 'start_story', {title: 'Orphan'});
-      expect(noProject.isError).toBe(true);
-      expect(noProject.data).toMatchObject({error: 'invalid_request'});
-      expect(String(noProject.data.message)).toMatch(/projectId/);
-
       const noTitle = await call(client, 'start_story', {projectId: project.id, title: '  '});
       expect(noTitle.isError).toBe(true);
+      expect(noTitle.data).toMatchObject({error: 'invalid_request'});
       expect(String(noTitle.data.message)).toMatch(/title/i);
+    });
+
+    describe('without a projectId', () => {
+      /** Starts a story from `workingDirectory` and returns the project it landed in. */
+      async function startIn(client: Client, workingDirectory?: string) {
+        const args = workingDirectory === undefined ? {title: 'A task'} : {title: 'A task', workingDirectory};
+        const {story, project} = await ok<{story: Story; project: Project}>(client, 'start_story', args);
+        expect(storyRow(story.id).projectId).toBe(project.id);
+        return project;
+      }
+
+      function projectCount(userId: string) {
+        return h.db.select().from(projects).where(eq(projects.userId, userId)).all().length;
+      }
+
+      it('uses the project whose path is the working directory', async () => {
+        const {user, project} = await seedUser();
+        const client = await connect(seedAgent(user.id).token);
+
+        expect((await startIn(client, project.path)).id).toBe(project.id);
+      });
+
+      it('uses the project the working directory sits inside, the deepest one winning', async () => {
+        const {user} = await seedUser();
+        const outer = createProject(h.db, h.app.hub, user.id, {name: 'mono', path: '/code/mono'});
+        const inner = createProject(h.db, h.app.hub, user.id, {name: 'api', path: '/code/mono/api/'});
+        const client = await connect(seedAgent(user.id).token);
+
+        expect((await startIn(client, '/code/mono/api/src/routes')).id).toBe(inner.id);
+        expect(outer.id).not.toBe(inner.id);
+      });
+
+      it('does not take a sibling that merely shares a prefix', async () => {
+        const {user} = await seedUser();
+        const app = createProject(h.db, h.app.hub, user.id, {name: 'app', path: '/code/app'});
+        const client = await connect(seedAgent(user.id).token);
+
+        const project = await startIn(client, '/code/app-two/src');
+        expect(project.id).not.toBe(app.id);
+        expect(project).toMatchObject({name: 'src', path: '/code/app-two/src'});
+      });
+
+      it('creates a project named after the directory when none matches', async () => {
+        const {user} = await seedUser();
+        const client = await connect(seedAgent(user.id).token);
+        const before = projectCount(user.id);
+
+        const project = await startIn(client, '/Users/dev/scratch/foo/');
+        expect(project).toMatchObject({name: 'foo', path: '/Users/dev/scratch/foo'});
+        expect(projectCount(user.id)).toBe(before + 1);
+      });
+
+      it('skips an archived project and creates a fresh one', async () => {
+        const {user} = await seedUser();
+        const old = createProject(h.db, h.app.hub, user.id, {name: 'old', path: '/code/old'});
+        h.db.update(projects).set({archivedAt: Date.now()}).where(eq(projects.id, old.id)).run();
+        const client = await connect(seedAgent(user.id).token);
+
+        const project = await startIn(client, '/code/old');
+        expect(project.id).not.toBe(old.id);
+        expect(project.archivedAt).toBeNull();
+      });
+
+      it('falls back to one shared Ad-hoc project with no directory at all', async () => {
+        const {user} = await seedUser();
+        const first = await connect(seedAgent(user.id, {name: 'one'}).token);
+        const second = await connect(seedAgent(user.id, {name: 'two'}).token);
+
+        const a = await startIn(first);
+        const b = await startIn(second);
+        expect(a).toMatchObject({name: 'Ad-hoc', path: ''});
+        expect(b.id).toBe(a.id);
+      });
+
+      it('refuses a working directory that is not an absolute path', async () => {
+        const {user} = await seedUser();
+        const client = await connect(seedAgent(user.id).token);
+
+        const {isError, data} = await call(client, 'start_story', {title: 'A task', workingDirectory: 'relative/dir'});
+        expect(isError).toBe(true);
+        expect(data).toMatchObject({error: 'invalid_request'});
+        expect(String(data.message)).toMatch(/workingDirectory/);
+      });
     });
   });
 

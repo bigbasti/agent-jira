@@ -8,7 +8,7 @@ describe('loadConfig', () => {
     it('uses default port, database path and public url in development', () => {
       const config = loadConfig(baseEnv());
       expect(config.port).toBe(3000);
-      expect(config.databasePath).toBe('./data/agent-jira.db');
+      expect(config.databasePath).toBe('./data/agent-kanban.db');
       expect(config.publicUrl).toBe('http://localhost:3000');
       expect(config.nodeEnv).toBe('development');
     });

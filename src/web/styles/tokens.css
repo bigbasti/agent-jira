@@ -1,5 +1,5 @@
 /*
- * Design tokens for the agent-jira console.
+ * Design tokens for the agent-kanban console.
  *
  * Elevation is expressed as steps of surface plus a hairline, never as a shadow:
  * canvas (the room) -> surface (a panel) -> raised (a control sitting on a panel).

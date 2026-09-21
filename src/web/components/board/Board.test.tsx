@@ -20,7 +20,7 @@ function renderBoard(stories: Story[], overrides: Partial<Parameters<typeof Boar
   render(
     <Board
       stories={stories}
-      projects={[makeProject({id: 'p1', name: 'agent-jira'})]}
+      projects={[makeProject({id: 'p1', name: 'agent-kanban'})]}
       agents={[makeAgent({id: 'a1', name: 'claude-code-1'})]}
       onMove={onMove}
       {...overrides}
@@ -109,7 +109,7 @@ describe('Board', () => {
     renderBoard([makeStory({id: 's1', status: 'in_progress', projectId: 'p1', claimedByAgentId: 'a1'})]);
 
     const card = within(column('In progress')).getByRole('article');
-    expect(within(card).getByText('agent-jira')).toBeInTheDocument();
+    expect(within(card).getByText('agent-kanban')).toBeInTheDocument();
     expect(within(card).getByText('claude-code-1')).toBeInTheDocument();
   });
 

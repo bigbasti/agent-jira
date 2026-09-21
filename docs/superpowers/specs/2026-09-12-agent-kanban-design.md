@@ -1,4 +1,4 @@
-# agent-jira — Design
+# agent-kanban — Design
 
 **Date:** 2026-09-12
 **Status:** Approved for planning
@@ -221,7 +221,7 @@ truth for the workflow. It states, in order:
 | `list_projects` | — | `{id, name, path}` |
 | `wait_for_work` | `timeoutSeconds?` (≤55) | Long-polls; resolves when a `todo` story is playable (played, or agent is autonomous), else `{work: false}`. Sets agent status `waiting`. |
 | `claim_next_story` | `storyId?` | Claims a specific or the highest-ranked unblocked `todo` story, moves it to `in_progress`, returns the full story + project path |
-| `start_story` | `projectId, title, description?` | For a task the human gave the agent directly (not via the board): creates the story straight into `in_progress`, top of the column, claimed by the caller, with a note saying where it came from. Refused while the agent holds another story; never for self-initiated work |
+| `start_story` | `title, description?, projectId?, workingDirectory?` | For a task the human gave the agent directly (not via the board): creates the story straight into `in_progress`, top of the column, claimed by the caller, with a note saying where it came from. Without `projectId` the project is the deepest unarchived one whose `path` contains `workingDirectory`, else a new one created for that directory, else (no directory) the shared `Ad-hoc` project with an empty `path`. Refused while the agent holds another story; never for self-initiated work |
 | `move_story` | `storyId, status, note?` | Guarded transition; rejects `accepted` |
 | `post_progress` | `storyId, progressPct, label` | Updates the bar, appends a `progress` update |
 | `post_update` | `storyId, body, kind?` | Appends to the timeline |
@@ -236,7 +236,7 @@ board state as context.
 
 ### OAuth 2.1
 
-`claude mcp add --transport http agent-jira http://host:3000/mcp` triggers:
+`claude mcp add --transport http agent-kanban http://host:3000/mcp` triggers:
 
 1. Unauthenticated `POST /mcp` → `401` + `WWW-Authenticate: Bearer resource_metadata=…`
 2. Client fetches `/.well-known/oauth-protected-resource` and
@@ -253,12 +253,12 @@ Tokens are stored hashed (SHA-256); only the agent holds the plaintext.
 ## 7. Host runner (cold start)
 
 `scripts/agent-runner.sh` — a ~60-line bash script for the case where no agent is running
-yet. It reads a config file (`~/.agent-jira/runner.json`: base URL, token, poll interval),
+yet. It reads a config file (`~/.agent-kanban/runner.json`: base URL, token, poll interval),
 polls `GET /api/runner/queued` (bearer auth, same tokens as MCP), and on a hit launches:
 
 ```
-claude --mcp-config <generated> -p "Claim story <id> from agent-jira and implement it. \
-Follow the agent-jira MCP instructions exactly." --cwd <project.path>
+claude --mcp-config <generated> -p "Claim story <id> from agent-kanban and implement it. \
+Follow the agent-kanban MCP instructions exactly." --cwd <project.path>
 ```
 
 It is optional, documented in the README, and never required for a running agent — an agent
@@ -309,8 +309,8 @@ status switcher.
 
 - **Dockerfile** — stage 1 builds the SPA and compiles TS; stage 2 is `node:22-alpine` with
   production deps only, non-root `node` user, `HEALTHCHECK` on `/api/health`.
-- **docker-compose.yml** — one service, `ports: 3000`, volume `agent-jira-data:/data`,
-  env `DATABASE_PATH=/data/agent-jira.db`, `SESSION_SECRET`, `PUBLIC_URL`,
+- **docker-compose.yml** — one service, `ports: 3000`, volume `agent-kanban-data:/data`,
+  env `DATABASE_PATH=/data/agent-kanban.db`, `SESSION_SECRET`, `PUBLIC_URL`,
   `restart: unless-stopped`.
 - **`.env.example`** with every variable documented; the server refuses to boot with a
   default/missing `SESSION_SECRET`.

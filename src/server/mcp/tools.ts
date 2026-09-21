@@ -4,7 +4,7 @@ import type {CallToolResult} from '@modelcontextprotocol/sdk/types.js';
 import type {Database} from '../db/index.js';
 import type {EventHub} from '../events/hub.js';
 import {getBoard} from '../services/board.js';
-import {NotFoundError, listProjects} from '../services/projects.js';
+import {NotFoundError, absolutePath, listProjects, resolveProjectForWork} from '../services/projects.js';
 import {
   TransitionError,
   ValidationError,
@@ -291,10 +291,8 @@ const releaseArgs = z.object({
     .min(1, 'The reason must not be empty: it is recorded on the story.'),
 });
 const startArgs = z.object({
-  projectId: z
-    .string(absent('projectId is required: the id of the project the work belongs to (see list_projects).'))
-    .trim()
-    .min(1, 'projectId must not be empty.'),
+  projectId: z.string().trim().min(1, 'projectId must not be empty; leave it out to go by workingDirectory.').optional(),
+  workingDirectory: absolutePath.optional(),
   title: z
     .string(absent('A title is required: the card title your human will see on the board.'))
     .trim()
@@ -391,13 +389,18 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       title: 'Start a story for a direct request',
       description:
-        'Puts a task your human gave you directly — in your own session, not through the board — on the board as a story you are already working on: it is created straight in `in_progress`, at the top of the column, and claimed by you. Call it before you write any code, as soon as you are asked, so your human can watch the work on the board; from then on treat it like any claimed story: `post_progress`, `move_story` through `in_test` to `finished`, never `accepted`. Never call it on your own initiative, for work nobody asked for, or to split a claimed story into pieces. Refused while you are still working on another story. The result carries the story and its project: work only inside that `project.path`.',
+        'Puts a task your human gave you directly — in your own session, not through the board — on the board as a story you are already working on: it is created straight in `in_progress`, at the top of the column, and claimed by you. You do not need a project: send your current `workingDirectory` and the story goes to the project that directory belongs to, or to a new one created for it; with neither, it goes to the shared `Ad-hoc` project, whose empty `path` means there is no directory to stay inside. Call it before you write any code, as soon as you are asked, so your human can watch the work on the board; from then on treat it like any claimed story: `post_progress`, `move_story` through `in_test` to `finished`, never `accepted`. Never call it on your own initiative, for work nobody asked for, or to split a claimed story into pieces. Refused while you are still working on another story. The result carries the story and its project: work only inside that `project.path` when it has one.',
       inputSchema: {
         projectId: z
           .string()
           .optional()
           .catch(undefined)
-          .describe('Required. The project the work belongs to — the one whose `path` you are working in (see `list_projects`).'),
+          .describe('Optional. The project the work belongs to, if you know it (see `list_projects`). Takes precedence over `workingDirectory`.'),
+        workingDirectory: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('Your current working directory, as an absolute path. Send it whenever you have one: it decides the project.'),
         title: z
           .string()
           .optional()
@@ -653,9 +656,11 @@ function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
 function startStory(ctx: McpContext, input: z.infer<typeof startArgs>): ToolOutcome {
   requireFreeHands(ctx);
 
+  const {workingDirectory, ...fields} = input;
+  const projectId = fields.projectId ?? resolveProjectForWork(ctx.db, ctx.hub, ctx.userId, workingDirectory).id;
   const story = startStoryForAgent(ctx.db, ctx.hub, {
     ...identity(ctx),
-    input,
+    input: {...fields, projectId},
     note: 'Started from a request my human gave me directly, outside the board.',
   });
   updateAgent(ctx.db, ctx.hub, identity(ctx), {currentStoryId: story.id, status: 'working'});

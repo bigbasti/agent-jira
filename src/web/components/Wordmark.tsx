@@ -16,7 +16,7 @@ export function Wordmark({size = 'bar', caret = false, className}: WordmarkProps
         className,
       )}
     >
-      agent-jira
+      agent-kanban
       {caret && <span className="caret" aria-hidden="true" />}
     </span>
   );

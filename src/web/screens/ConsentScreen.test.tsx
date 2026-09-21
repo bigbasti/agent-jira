@@ -79,7 +79,7 @@ describe('ConsentScreen', () => {
   });
 
   it('renders a hostile client name as text, never as markup', async () => {
-    const hostile = '<img src=x onerror="alert(1)">agent-jira official';
+    const hostile = '<img src=x onerror="alert(1)">agent-kanban official';
     routeFetch({description: () => jsonResponse(200, consentBody({clientName: hostile}))});
     renderConsent();
 

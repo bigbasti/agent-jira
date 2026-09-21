@@ -44,12 +44,12 @@ describe('GET /api/runner/queued', () => {
     return {agentId, accessToken};
   }
 
-  async function createProject(cookie: string, path = '/Users/dev/agent-jira') {
+  async function createProject(cookie: string, path = '/Users/dev/agent-kanban') {
     const res = await h.app.inject({
       method: 'POST',
       url: '/api/projects',
       headers: {cookie},
-      payload: {name: 'agent-jira', path},
+      payload: {name: 'agent-kanban', path},
     });
     expect(res.statusCode).toBe(201);
     return res.json() as {id: string; path: string};
