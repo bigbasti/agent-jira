@@ -115,6 +115,47 @@ describe('SPA serving in production', () => {
     }
   });
 
+  it('never shadows /ws/ or /mcp/ (a trailing slash) with the SPA fallback', async () => {
+    // `/ws` and `/mcp` are registered as exact routes, so `/ws/`/`/mcp/` don't match them
+    // and fall through to the notFoundHandler — exactly the path that must still refuse,
+    // not silently serve `index.html`, for a client that appends a trailing slash.
+    const prodApp = await buildProdApp();
+    try {
+      const wsRes = await prodApp.inject({method: 'GET', url: '/ws/'});
+      expect(wsRes.statusCode).toBe(404);
+      expect(wsRes.body).not.toContain('<div id="root">');
+
+      const mcpRes = await prodApp.inject({method: 'GET', url: '/mcp/'});
+      expect(mcpRes.statusCode).toBe(404);
+      expect(mcpRes.body).not.toContain('<div id="root">');
+    } finally {
+      await prodApp.close();
+    }
+  });
+
+  it('never shadows an alternate-case reserved path with the SPA fallback', async () => {
+    const prodApp = await buildProdApp();
+    try {
+      const upperApi = await prodApp.inject({method: 'GET', url: '/API/does-not-exist'});
+      expect(upperApi.statusCode).toBe(404);
+      expect(upperApi.body).not.toContain('<div id="root">');
+
+      const upperWellKnown = await prodApp.inject({method: 'GET', url: '/.WELL-KNOWN/does-not-exist'});
+      expect(upperWellKnown.statusCode).toBe(404);
+      expect(upperWellKnown.body).not.toContain('<div id="root">');
+
+      const upperWs = await prodApp.inject({method: 'GET', url: '/WS/'});
+      expect(upperWs.statusCode).toBe(404);
+      expect(upperWs.body).not.toContain('<div id="root">');
+
+      const upperMcp = await prodApp.inject({method: 'GET', url: '/MCP/'});
+      expect(upperMcp.statusCode).toBe(404);
+      expect(upperMcp.body).not.toContain('<div id="root">');
+    } finally {
+      await prodApp.close();
+    }
+  });
+
   it('does not fall back to index.html for a non-GET method', async () => {
     const prodApp = await buildProdApp();
     try {

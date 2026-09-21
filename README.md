@@ -21,7 +21,7 @@ cp .env.example .env
 ```
 
 Open `.env` and set `SESSION_SECRET` to a real random value — the server refuses to start
-in production without one:
+in production with one missing, too short, or left as the example placeholder:
 
 ```bash
 openssl rand -hex 32
@@ -108,6 +108,17 @@ for that:
   exposing the container directly — trusting forwarded-for headers from a client that
   isn't actually behind a proxy lets that client forge its own IP and dodge rate limits
   entirely.
+
+One more thing worth knowing about `SESSION_SECRET` specifically: `docker-compose.yml`'s
+`${SESSION_SECRET:?set SESSION_SECRET in .env}` only catches a missing value at the moment
+Compose *parses* the file — if your platform injects environment variables straight into
+the container instead of through a `.env` Compose reads (some PaaS setups do), that guard
+never runs. The real backstop is inside the app itself: `config.ts` refuses to boot in
+production with a `SESSION_SECRET` that is missing, too short, or an obvious placeholder
+(including the exact value shipped in `.env.example`) — so however your platform passes
+environment variables in, the app fails closed rather than starting up insecurely. Set it
+in whichever environment your deployment actually parses, and trust the boot-time check to
+catch it if you didn't.
 
 Your proxy needs to forward two non-HTTP paths through as-is, not just `/`:
 

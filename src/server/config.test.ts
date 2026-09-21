@@ -46,6 +46,58 @@ describe('loadConfig', () => {
       const config = loadConfig({...baseEnv(), SESSION_SECRET: 'short'});
       expect(config.sessionSecret.length).toBeGreaterThanOrEqual(32);
     });
+
+    it('throws in production when SESSION_SECRET is the exact .env.example placeholder', () => {
+      // The literal value shipped at .env.example's SESSION_SECRET= line. It is long
+      // enough (54 chars) to pass the length check, so it must be refused by name — a
+      // deployer who runs `cp .env.example .env` and skips the next step must never be
+      // able to boot production with a secret anyone can read in this repo's history.
+      const placeholder = 'change-me-to-a-random-string-of-at-least-32-characters';
+      expect(placeholder.length).toBeGreaterThanOrEqual(32);
+      expect(() =>
+        loadConfig({...baseEnv(), NODE_ENV: 'production', SESSION_SECRET: placeholder}),
+      ).toThrow(/SESSION_SECRET/);
+    });
+
+    it('throws in production for an obvious "change-me"-style secret even if long enough', () => {
+      const secret = `change-me-${'a'.repeat(40)}`;
+      expect(() =>
+        loadConfig({...baseEnv(), NODE_ENV: 'production', SESSION_SECRET: secret}),
+      ).toThrow(/SESSION_SECRET/);
+    });
+
+    it('rejects a "change-me"-style secret case-insensitively', () => {
+      const secret = `CHANGE-ME-${'a'.repeat(40)}`;
+      expect(() =>
+        loadConfig({...baseEnv(), NODE_ENV: 'production', SESSION_SECRET: secret}),
+      ).toThrow(/SESSION_SECRET/);
+    });
+
+    it('rejects "changeme" with no separator too', () => {
+      const secret = `changeme${'a'.repeat(40)}`;
+      expect(() =>
+        loadConfig({...baseEnv(), NODE_ENV: 'production', SESSION_SECRET: secret}),
+      ).toThrow(/SESSION_SECRET/);
+    });
+
+    it('tells the deployer exactly what to run when the secret is missing or a placeholder', () => {
+      expect(() => loadConfig({...baseEnv(), NODE_ENV: 'production'})).toThrow(/openssl rand -hex 32/);
+      expect(() =>
+        loadConfig({
+          ...baseEnv(),
+          NODE_ENV: 'production',
+          SESSION_SECRET: 'change-me-to-a-random-string-of-at-least-32-characters',
+        }),
+      ).toThrow(/openssl rand -hex 32/);
+    });
+
+    it('still accepts a real random secret that merely contains "change" as a substring', () => {
+      // The check must not be so broad it refuses a genuine secret that happens to
+      // contain the word "change" somewhere other than as a change-me-style prefix.
+      const secret = `${'x'.repeat(20)}-change-${'y'.repeat(20)}`;
+      const config = loadConfig({...baseEnv(), NODE_ENV: 'production', SESSION_SECRET: secret});
+      expect(config.sessionSecret).toBe(secret);
+    });
   });
 
   describe('PORT', () => {

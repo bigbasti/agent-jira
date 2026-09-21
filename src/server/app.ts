@@ -28,11 +28,21 @@ const VERSION = '0.1.0';
 const DEFAULT_WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../web');
 
 /** Path prefixes/exact paths the SPA fallback must never answer, even for a GET. */
-const RESERVED_PREFIXES = ['/api/', '/.well-known/'];
+const RESERVED_PREFIXES = ['/api/', '/.well-known/', '/ws/', '/mcp/'];
 const RESERVED_EXACT = new Set(['/api', '/ws', '/mcp']);
 
+/**
+ * Matched case-insensitively, and a single trailing slash is ignored — `GET /WS/` or
+ * `GET /mcp/` must be refused exactly like `GET /ws`/`GET /mcp` are, not fall through to
+ * `looksLikeStaticAsset` (which a slash-terminated path never satisfies) and come back as
+ * a 200 of `index.html`. An MCP or WS client that appends a trailing slash should see a
+ * protocol-level 404, not a confusing page of HTML.
+ */
 function isReservedPath(pathname: string): boolean {
-  return RESERVED_EXACT.has(pathname) || RESERVED_PREFIXES.some(prefix => pathname.startsWith(prefix));
+  const lower = pathname.toLowerCase();
+  if (RESERVED_PREFIXES.some(prefix => lower.startsWith(prefix))) return true;
+  const withoutTrailingSlash = lower.length > 1 && lower.endsWith('/') ? lower.slice(0, -1) : lower;
+  return RESERVED_EXACT.has(withoutTrailingSlash);
 }
 
 /**
