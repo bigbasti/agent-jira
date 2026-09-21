@@ -351,6 +351,51 @@ describe('mcp server', () => {
       expect(payload.reason).toBeTruthy();
     });
 
+    it('writes no note when the release is refused', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Someone else’s work');
+      const other = seedAgent(user.id, {name: 'Other agent'});
+      h.db
+        .update(stories)
+        .set({claimedByAgentId: other.agentId, status: 'in_progress'})
+        .where(eq(stories.id, story.id))
+        .run();
+
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const result = await rawCall(client, 'release_story', {storyId: story.id, reason: 'Not mine but here I am'});
+      expect(result.isError).toBe(true);
+      expect(storyRow(story.id).status).toBe('in_progress');
+
+      const timeline = h.db.select().from(storyUpdates).where(eq(storyUpdates.storyId, story.id)).all();
+      expect(timeline.some(update => update.body.includes('Not mine but here I am'))).toBe(false);
+    });
+
+    it('refuses to claim a second story while it is still working on one', async () => {
+      const {user, project} = await seedUser();
+      const first = seedTodoStory(user.id, project.id, 'First story');
+      const second = seedTodoStory(user.id, project.id, 'Second story');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      await claimed(client);
+      expect(agentRow(agentId).currentStoryId).toBe(first.id);
+
+      const result = await rawCall(client, 'claim_next_story');
+      expect(result.isError).toBe(true);
+      expect(result.text).toMatch(/already working on/i);
+      expect(storyRow(second.id).status).toBe('todo');
+      expect(agentRow(agentId).currentStoryId).toBe(first.id);
+
+      // Finishing the first story frees the agent to take the next one.
+      for (const status of ['in_test', 'finished'] as const) {
+        await ok(client, 'move_story', {storyId: first.id, status, reason: 'Moving on'});
+      }
+      const next = await claimed(client);
+      expect(next.story.id).toBe(second.id);
+    });
+
     it('releases a story back to todo and leaves the agent idle', async () => {
       const {user, project} = await seedUser();
       const story = seedTodoStory(user.id, project.id, 'Half done');

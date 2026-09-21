@@ -209,7 +209,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       title: 'Claim the next story',
       description:
-        'Claims a story and moves it to `in_progress`. With no argument it takes the top unblocked story in `todo`, skipping blocked ones; with `storyId` it claims that story, which is refused if it is blocked or already held by another agent. The result carries the story and its project: work only inside that `project.path`. Between two stories, clear your context with `/clear` first — and only claim another story unattended when `control.autonomous` is true.',
+        'Claims a story and moves it to `in_progress`. With no argument it takes the top unblocked story in `todo`, skipping blocked ones; with `storyId` it claims that story, which is refused if it is blocked or already held by another agent. The result carries the story and its project: work only inside that `project.path`. You may hold only one story at a time — finish or `release_story` the one you have first. Between two stories, clear your context with `/clear` — and only claim another story unattended when `control.autonomous` is true.',
       inputSchema: {
         storyId: z.string().trim().min(1).optional().describe('Claim this story instead of the next one in `todo`.'),
       },
@@ -323,6 +323,15 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     },
     async ({storyId, reason}) =>
       respond(ctx, storyId, () => {
+        // The move goes first: a release the service refuses must not leave a note
+        // behind on a story this agent does not hold.
+        const story = moveStory(ctx.db, ctx.hub, {
+          userId: ctx.userId,
+          storyId,
+          status: 'todo',
+          actor: 'agent',
+          agentId: ctx.agentId,
+        });
         addUpdate(ctx.db, ctx.hub, {
           userId: ctx.userId,
           storyId,
@@ -330,13 +339,6 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
           kind: 'note',
           authorType: 'agent',
           authorId: ctx.agentId,
-        });
-        const story = moveStory(ctx.db, ctx.hub, {
-          userId: ctx.userId,
-          storyId,
-          status: 'todo',
-          actor: 'agent',
-          agentId: ctx.agentId,
         });
         updateAgent(ctx.db, ctx.hub, identity(ctx), {currentStoryId: null, status: 'idle'});
         return {payload: {story}, storyId};
@@ -360,8 +362,31 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 }
 
+/**
+ * The story this agent is actually mid-way through, if any — still held by it and still
+ * in a working column. A story it left in `finished` does not count: handing work over
+ * for review is exactly when an autonomous agent goes looking for the next story.
+ */
+function storyInHand(ctx: McpContext): Story | undefined {
+  const agent = findOwnedAgent(ctx.db, ctx.userId, ctx.agentId);
+  if (!agent?.currentStoryId) return undefined;
+
+  const story = listStories(ctx.db, ctx.userId).find(candidate => candidate.id === agent.currentStoryId);
+  if (!story || story.claimedByAgentId !== ctx.agentId) return undefined;
+  return story.status === 'in_progress' || story.status === 'in_test' ? story : undefined;
+}
+
 /** `claim_next_story`: takes the named story, or the top unblocked card in `todo`. */
 function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
+  // Claiming a second story would quietly abandon the first one: it would sit in
+  // `in_progress` with nobody working on it, and the human would have no way to tell.
+  const inHand = storyInHand(ctx);
+  if (inHand && inHand.id !== storyId) {
+    throw new TransitionError(
+      `You are already working on "${inHand.title}" (${inHand.id}, ${inHand.status}). Finish it or call release_story before claiming another story.`,
+    );
+  }
+
   const targetId = storyId ?? nextClaimable(ctx)?.id;
   if (!targetId) {
     return {
