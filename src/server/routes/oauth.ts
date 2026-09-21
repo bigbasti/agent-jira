@@ -1,6 +1,7 @@
 import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import type {AppConfig} from '../config.js';
+import {isSameOrigin} from '../http/origin.js';
 import {requireUser} from '../services/auth.js';
 import {OAuthError, OAuthRedirectError} from '../oauth/errors.js';
 import {authorizationServerMetadata, protectedResourceMetadata} from '../oauth/metadata.js';
@@ -42,33 +43,14 @@ const TOKEN_RATE_LIMIT = {max: 60, timeWindow: '1 minute'};
 const DUPLICATE_PARAMETER_ERROR = 'Each request parameter must be given exactly once.';
 
 /**
- * Refuses a request whose `Origin` names somewhere other than this server.
- *
- * The belt to the JSON-only suspenders on the consent decision: browsers attach `Origin`
- * to every cross-site request that can carry a body, so a forged submission is turned
- * away before it reaches the session. A same-origin `fetch` from this app's own pages
- * either omits the header or sends this host, and a non-browser caller (which has no
- * cookie to ride on anyway) sends nothing. Compared against `Host` rather than
- * `publicUrl` so it still holds when a proxy or a dev server fronts the app.
- *
- * The literal string `null` is the opaque origin a sandboxed iframe sends, and it is
- * refused: it is emphatically not this host, and treating it as same-origin would be the
- * one soft spot in a stack that is otherwise parser scoping plus SameSite=Lax.
+ * Refuses a request whose `Origin` names somewhere other than this server — the belt to
+ * the JSON-only suspenders on the consent decision, so a forged submission is turned away
+ * before it reaches the session. The rule itself lives in `http/origin.ts`, because the
+ * `/ws` upgrade needs exactly the same one.
  */
 async function requireSameOrigin(req: FastifyRequest, reply: FastifyReply) {
-  const origin = req.headers.origin;
-  if (origin === undefined) return;
-
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    return reply.code(403).send({error: 'invalid_request', error_description: 'Cross-origin request refused.'});
-  }
-
-  if (originHost !== req.headers.host) {
-    return reply.code(403).send({error: 'invalid_request', error_description: 'Cross-origin request refused.'});
-  }
+  if (isSameOrigin(req.headers.origin, req.headers.host)) return;
+  return reply.code(403).send({error: 'invalid_request', error_description: 'Cross-origin request refused.'});
 }
 
 /** Tokens and codes must never be cached by anything in the path. */

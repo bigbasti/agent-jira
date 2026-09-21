@@ -1,5 +1,6 @@
 import type {FastifyInstance} from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
+import {isSameOrigin} from '../http/origin.js';
 
 export interface WsRouteOptions {
   /**
@@ -18,7 +19,8 @@ const MAX_MISSED_PONGS = 2;
  *
  * Authenticates from the same session cookie the REST routes use (the session plugin's
  * `onRequest` hook runs before this handler, same as any other route) — an unauthenticated
- * connection is closed with code 4401 rather than served. An authenticated connection is
+ * connection is closed with code 4401 rather than served, and one opened from another
+ * origin with 4403. An authenticated connection is
  * subscribed to `app.hub` for its user, sent `{type: 'hello'}` immediately, and kept alive
  * with a ping/pong heartbeat; both the hub subscription and the heartbeat timer are torn
  * down on close so neither leaks.
@@ -36,6 +38,15 @@ export async function registerWsRoute(app: FastifyInstance, opts: WsRouteOptions
     const userId = req.session.userId;
     if (!userId) {
       socket.close(4401, 'unauthorized');
+      return;
+    }
+
+    // The session cookie is `SameSite=Lax`, which keeps it off a cross-site *fetch* — but
+    // a WebSocket upgrade is not covered by that, so without this check any page the human
+    // happens to visit could open a live, cookie-authenticated feed of their whole board.
+    // Same rule as the OAuth consent decision (`http/origin.ts`).
+    if (!isSameOrigin(req.headers.origin, req.headers.host)) {
+      socket.close(4403, 'forbidden');
       return;
     }
 

@@ -91,6 +91,16 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // OAuth client-registration limiter in particular) would key on the proxy's one address.
   const app = Fastify({trustProxy: config.trustProxy});
 
+  // Every response, including errors and static assets: a browser must not second-guess a
+  // content type it was given, and nothing here is meant to be framed — least of all the
+  // OAuth consent screen, where a click hands an agent access to the whole board. Added
+  // before any route plugin so it covers all of them.
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('content-security-policy', "frame-ancestors 'none'");
+  });
+
   app.decorate('db', opts.db);
 
   const hub = new EventHub();

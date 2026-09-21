@@ -54,6 +54,34 @@ describe('GET /ws', () => {
     socket.close();
   });
 
+  it('refuses a connection from another origin, cookie or not', async () => {
+    const h = await createHarness();
+    const {cookie} = await h.register();
+    const url = await listen(h.app);
+
+    // SameSite=Lax keeps the cookie off a cross-site *fetch*, but a WebSocket upgrade is
+    // not covered by it: without this check any page the human visits could open a live
+    // feed of their board.
+    const socket = new WebSocket(url, {headers: {cookie, origin: 'http://evil.example'}});
+    const closed = onceClose(socket);
+    socket.on('error', () => {});
+
+    expect((await closed).code).toBe(4403);
+  });
+
+  it('accepts a connection whose origin is this server', async () => {
+    const h = await createHarness();
+    const {cookie} = await h.register();
+    await h.app.listen({port: 0});
+    const {port} = h.app.server.address() as AddressInfo;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      headers: {cookie, origin: `http://127.0.0.1:${port}`},
+    });
+
+    await onceOpen(socket);
+    socket.close();
+  });
+
   it('closes an unauthenticated connection with code 4401 instead of serving it', async () => {
     const h = await createHarness();
     const url = await listen(h.app);

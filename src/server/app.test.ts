@@ -16,6 +16,26 @@ describe('health', () => {
   });
 });
 
+describe('security headers', () => {
+  it('tells every browser not to sniff a content type, and not to frame the app', async () => {
+    const res = await app.inject({method: 'GET', url: '/api/health'});
+
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // The consent screen is a route in this SPA: a decision that hands an agent access to
+    // the board must not be framable by the page that asked for it.
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(String(res.headers['content-security-policy'])).toContain("frame-ancestors 'none'");
+  });
+
+  it('carries them on an error response too', async () => {
+    const res = await app.inject({method: 'GET', url: '/api/agents'});
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+});
+
 describe('SPA serving in production', () => {
   const webDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'testing/spa-fixture');
 

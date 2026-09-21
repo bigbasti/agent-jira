@@ -2,6 +2,7 @@ import {describe, it, expect, beforeEach} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createHarness} from '../testing/harness.js';
 import {users} from '../db/schema.js';
+import {LOGIN_RATE_LIMIT, REGISTER_RATE_LIMIT} from './auth.js';
 
 describe('auth', () => {
   let h: Awaited<ReturnType<typeof createHarness>>;
@@ -18,6 +19,41 @@ describe('auth', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().email).toBe('dev@example.com'); // lowercased, trimmed
     expect(res.headers['set-cookie']).toBeTruthy();
+  });
+
+  it('rate limits repeated login attempts', async () => {
+    const payload = {email: 'dev@example.com', password: 'hunter22hunter22'};
+    expect((await h.app.inject({method: 'POST', url: '/api/auth/register', payload})).statusCode).toBe(201);
+
+    const wrong = {email: 'dev@example.com', password: 'not-the-password'};
+    const codes: number[] = [];
+    for (let attempt = 0; attempt < LOGIN_RATE_LIMIT.max + 1; attempt += 1) {
+      codes.push((await h.app.inject({method: 'POST', url: '/api/auth/login', payload: wrong})).statusCode);
+    }
+
+    // Every attempt costs a full argon2id verification, so an unthrottled endpoint is both
+    // a password-guessing oracle and a cheap way to burn the box's CPU.
+    expect(codes.slice(0, LOGIN_RATE_LIMIT.max)).toEqual(Array(LOGIN_RATE_LIMIT.max).fill(401));
+    expect(codes.at(-1)).toBe(429);
+
+    // The throttle must not become a lockout that also refuses the real password.
+    const rejected = await h.app.inject({method: 'POST', url: '/api/auth/login', payload});
+    expect(rejected.statusCode).toBe(429);
+  });
+
+  it('rate limits repeated registrations', async () => {
+    const codes: number[] = [];
+    for (let attempt = 0; attempt < REGISTER_RATE_LIMIT.max + 1; attempt += 1) {
+      const res = await h.app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: {email: `user${attempt}@example.com`, password: 'hunter22hunter22'},
+      });
+      codes.push(res.statusCode);
+    }
+
+    expect(codes.slice(0, REGISTER_RATE_LIMIT.max)).toEqual(Array(REGISTER_RATE_LIMIT.max).fill(201));
+    expect(codes.at(-1)).toBe(429);
   });
 
   it('rejects a short password', async () => {
