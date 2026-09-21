@@ -1,6 +1,6 @@
 import * as RadixSelect from '@radix-ui/react-select';
 import clsx from 'clsx';
-import {Fragment, useId, useMemo} from 'react';
+import {Fragment, forwardRef, useId, useMemo} from 'react';
 
 export interface SelectOption {
   value: string;
@@ -27,11 +27,19 @@ export interface SelectProps {
 
 const ITEM_CLASS = clsx(
   'flex cursor-default items-center justify-between gap-3 rounded-well border-l-2 border-transparent py-1.5 pr-2 pl-[7px] text-body text-text',
-  // The plain highlight wash measures ~1.1:1 against the panel behind it — too subtle to
-  // read as a highlight on its own — so the highlighted state also gets accent text and a
-  // left rule, which together resolve as this component's only affordance for "current
-  // item" (Select.Item does not take a focus ring).
-  'outline-none data-[highlighted]:border-accent data-[highlighted]:bg-accent-wash data-[highlighted]:text-accent-text',
+  'outline-none',
+  // Accent marks committed state — the option that is actually selected — never
+  // transient pointer/keyboard chrome. A merely-highlighted, not-yet-selected item gets
+  // a neutral left rule instead. `border-hairline-strong` was tried here first and
+  // measured only ~1.4:1 against `--raised` — effectively as invisible as the wash it
+  // was replacing — so this uses `--muted` instead, which clears 5.25:1 (dark) / 6.26:1
+  // (light) against `--raised`. Ratios in the task report. The `data-[state=unchecked]`
+  // guard keeps this rule from fighting the accent one below when an item is both
+  // highlighted and selected, which is the common case right after the menu opens.
+  'data-[highlighted]:data-[state=unchecked]:border-muted',
+  // The committed item: a solid accent rule, wash and accent text together — this is the
+  // only place accent decorates this list.
+  'data-[state=checked]:border-accent data-[state=checked]:bg-accent-wash data-[state=checked]:text-accent-text',
 );
 
 /** Groups options by `group`, preserving first-seen order; ungrouped options come first. */
@@ -57,16 +65,10 @@ function SelectItem({option}: {option: SelectOption}) {
   );
 }
 
-export function Select({
-  label,
-  value,
-  onValueChange,
-  options,
-  pinnedOption,
-  placeholder = 'Choose one',
-  disabled,
-  className,
-}: SelectProps) {
+export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select(
+  {label, value, onValueChange, options, pinnedOption, placeholder = 'Choose one', disabled, className},
+  ref,
+) {
   const id = useId();
   const groups = useMemo(() => groupOptions(options), [options]);
 
@@ -77,6 +79,7 @@ export function Select({
       </label>
       <RadixSelect.Root value={value} onValueChange={onValueChange} disabled={disabled}>
         <RadixSelect.Trigger
+          ref={ref}
           id={id}
           className={clsx(
             'inline-flex h-9 w-full items-center justify-between gap-2 rounded-well border border-hairline bg-well px-3',
@@ -126,4 +129,4 @@ export function Select({
       </RadixSelect.Root>
     </div>
   );
-}
+});

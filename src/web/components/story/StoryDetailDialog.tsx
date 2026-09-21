@@ -49,7 +49,14 @@ export function StoryDetailDialog({storyId, open, onOpenChange}: StoryDetailDial
         : null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={story?.title ?? 'Story'} className="flex max-h-[85dvh] flex-col">
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={story?.title ?? 'Story'}
+      className="flex flex-col"
+      maxHeightClassName="max-h-[85dvh]"
+      bodyClassName="mt-4 flex min-h-0 flex-1 flex-col"
+    >
       {!story ? (
         <p className="text-body text-muted">Loading…</p>
       ) : (
@@ -75,7 +82,15 @@ export function StoryDetailDialog({storyId, open, onOpenChange}: StoryDetailDial
             {updatesQuery.data?.map(update => <UpdateRow key={update.id} update={update} />)}
           </ol>
 
-          <form onSubmit={handleSubmit} className="sticky bottom-0 flex flex-col gap-1.5 border-t border-hairline bg-surface pt-3">
+          {/*
+            Not `sticky`: this form is a flex sibling of the scrollable `<ol>` above, not
+            inside it, so there is no scrolling ancestor for `position: sticky` to stick
+            within — that class was inert dead weight. The pinned-at-bottom look it was
+            reaching for already falls out of ordinary flex layout: the `<ol>` scrolls
+            internally (`min-h-0 flex-1 overflow-y-auto`) while this row stays put below
+            it.
+          */}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-1.5 border-t border-hairline bg-surface pt-3">
             <label htmlFor={composerId} className="sr-only">
               Add a remark
             </label>

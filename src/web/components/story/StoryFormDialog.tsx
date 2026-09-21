@@ -53,6 +53,7 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
   const [fieldError, setFieldError] = useState<{field: Field; message: string} | null>(null);
 
   const titleRef = useRef<HTMLInputElement>(null);
+  const projectSelectRef = useRef<HTMLButtonElement>(null);
   const formId = useId();
   const descriptionId = `${formId}-description`;
 
@@ -98,6 +99,7 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
   function reject(field: Field, message: string) {
     setFieldError({field, message});
     if (field === 'title') titleRef.current?.focus();
+    else if (field === 'project') projectSelectRef.current?.focus();
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -153,6 +155,7 @@ export function StoryFormDialog({mode, story, open, onOpenChange}: StoryFormDial
             <ProjectCreateInline onCreated={handleProjectCreated} onCancel={() => setCreatingProject(false)} />
           ) : (
             <Select
+              ref={projectSelectRef}
               label="Project"
               value={form.projectId}
               onValueChange={handleProjectChange}

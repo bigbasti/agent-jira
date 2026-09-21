@@ -10,6 +10,21 @@ export interface DialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   className?: string;
+  /**
+   * Replaces the default `max-h-[min(42rem,calc(100dvh-2rem))]` cap outright, rather than
+   * being appended alongside it — two `max-h-*` utilities in one class list leave both
+   * rules in the output, with the winner decided by Tailwind's emitted order instead of
+   * by whichever one the caller meant.
+   */
+  maxHeightClassName?: string;
+  /**
+   * Replaces the default `mt-4` wrapper around `children`. Needed whenever the body must
+   * itself join the flex layout — e.g. a body split into a scrolling zone plus a footer
+   * that stays put — rather than just sitting in normal flow below the header: the plain
+   * `mt-4` div isn't a flex participant, so a `flex-1 min-h-0` inside it has nothing to
+   * measure against and never actually bounds anything.
+   */
+  bodyClassName?: string;
 }
 
 /**
@@ -24,6 +39,8 @@ export function Dialog({
   open,
   onOpenChange,
   className,
+  maxHeightClassName,
+  bodyClassName,
 }: DialogProps) {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -33,7 +50,8 @@ export function Dialog({
         <RadixDialog.Content
           className={clsx(
             'fixed left-1/2 top-1/2 z-50 w-[min(calc(100vw-2rem),34rem)] -translate-x-1/2 -translate-y-1/2',
-            'max-h-[min(42rem,calc(100dvh-2rem))] overflow-y-auto',
+            maxHeightClassName ?? 'max-h-[min(42rem,calc(100dvh-2rem))]',
+            'overflow-y-auto',
             'rounded-card border border-hairline bg-surface p-5',
             className,
           )}
@@ -58,7 +76,7 @@ export function Dialog({
               </svg>
             </RadixDialog.Close>
           </div>
-          <div className="mt-4">{children}</div>
+          <div className={bodyClassName ?? 'mt-4'}>{children}</div>
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>

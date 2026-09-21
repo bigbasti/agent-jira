@@ -86,6 +86,7 @@ describe('StoryFormDialog — create', () => {
     await user.click(screen.getByRole('button', {name: 'Add to draft'}));
 
     expect(await screen.findByText('Choose a project for this story.')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', {name: 'Project'})).toHaveFocus();
     expect(fetchMock).not.toHaveBeenCalledWith('/api/stories', expect.anything());
   });
 
