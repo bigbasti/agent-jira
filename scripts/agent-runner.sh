@@ -45,6 +45,12 @@ if [ -z "$BASE_URL" ] || [ -z "$TOKEN" ]; then
   echo "agent-runner: $CONFIG must set both \"baseUrl\" and \"token\" (see scripts/runner.example.json)" >&2
   exit 1
 fi
+# A zero or negative pollSeconds would turn every backoff below into a tight retry loop
+# (INTERVAL * poll_failures never grows past 0), and would busy-loop the happy path too.
+if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [ "$INTERVAL" -lt 1 ]; then
+  echo "agent-runner: $CONFIG's \"pollSeconds\" must be a whole number of at least 1" >&2
+  exit 1
+fi
 # From here on, $TOKEN is a live credential with the same power as a connected agent.
 # It is only ever placed in the Authorization header below — never echoed, logged, or
 # put anywhere a `ps` from another user on the same box could read it.
@@ -53,6 +59,16 @@ log "agent-jira runner watching $BASE_URL every ${INTERVAL}s"
 
 poll_failures=0
 backoff_until=0
+
+# Logs a poll problem, backs off (linear, capped at MAX_BACKOFF_SECONDS), and sleeps —
+# shared by every way a poll can go wrong, so none of them can turn into a tight loop.
+poll_backoff() {
+  poll_failures=$((poll_failures + 1))
+  local backoff=$((INTERVAL * poll_failures))
+  [ "$backoff" -gt "$MAX_BACKOFF_SECONDS" ] && backoff=$MAX_BACKOFF_SECONDS
+  log "$1 (attempt $poll_failures) — retrying in ${backoff}s"
+  sleep "$backoff"
+}
 
 while true; do
   now=$(date +%s)
@@ -64,26 +80,33 @@ while true; do
   # A failed poll (server down, expired/revoked token, network blip) must not kill the
   # loop: log it and back off, rather than a tight retry or a hard exit.
   if ! RESP=$(curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/runner/queued"); then
-    poll_failures=$((poll_failures + 1))
-    backoff=$((INTERVAL * poll_failures))
-    [ "$backoff" -gt "$MAX_BACKOFF_SECONDS" ] && backoff=$MAX_BACKOFF_SECONDS
-    log "poll failed (attempt $poll_failures) — is the server up and the token still valid? retrying in ${backoff}s"
-    sleep "$backoff"
+    poll_backoff "poll failed — is the server up and the token still valid?"
+    continue
+  fi
+
+  # A 200 response is not automatically usable: a proxy or a server-side hiccup can hand
+  # back a truncated or non-JSON body while still answering 200. Without this guard, `jq`
+  # would exit non-zero on a bare assignment and `set -e` would kill the whole script —
+  # exactly the unattended failure this script exists to avoid. Same treatment as a
+  # failed poll: log it, back off, keep going.
+  if ! STORY_ID=$(printf '%s' "$RESP" | jq -r '.story.id // empty' 2>/dev/null); then
+    poll_backoff "poll returned a response that could not be parsed as JSON"
     continue
   fi
   poll_failures=0
-
-  STORY_ID=$(printf '%s' "$RESP" | jq -r '.story.id // empty')
 
   if [ -n "$STORY_ID" ]; then
     DIR=$(printf '%s' "$RESP" | jq -r '.story.projectPath')
     TITLE=$(printf '%s' "$RESP" | jq -r '.story.title')
     log "launching agent for: $TITLE ($STORY_ID) in $DIR"
 
-    # Runs synchronously — the loop does not poll again until the agent exits, so this
-    # process never launches a second agent on top of one still working. The server
-    # itself also stops offering a story the moment it's claimed, so even a second
-    # runner instance polling the same account can't double-launch it.
+    # Runs synchronously — the loop does not poll again until the agent exits, so *this*
+    # process never launches a second agent on top of one still working. That protection
+    # is per-instance only: GET /api/runner/queued is read-only and claims nothing, so a
+    # story stays "queued" until the launched agent actually connects over MCP and claims
+    # it. A second runner instance polling the same account inside that window could
+    # launch its own agent on the same story too — this script assumes exactly one
+    # instance runs per account.
     START=$(date +%s)
     if (cd "$DIR" && "$LAUNCH_CMD" -p "Connect to the agent-jira MCP server, claim story $STORY_ID, and implement it following the server's instructions exactly."); then
       log "agent for $STORY_ID finished"

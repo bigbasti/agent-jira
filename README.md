@@ -139,17 +139,27 @@ clear message, rather than a cryptic failure on its first poll, if either is mis
    Every `pollSeconds` (default 10) it asks the board for the oldest played story nobody
    is working on. The moment there is one, it runs `claude -p "…"` in that story's
    project directory to pick it up, blocking until that agent session ends before it
-   polls again — so it never launches a second agent on top of one still working. A
-   failed poll (server down, expired token) is logged and retried with backoff rather
-   than killing the loop; a launch that exits almost immediately is treated as a crash
-   rather than finished work and backs off the same way, so a broken `claude` invocation
-   can't spin in a restart loop. Leave it running in a terminal (or under `tmux`, a
-   `launchd` agent, or a `systemd --user` unit) on whatever machine should cold-start
-   agents. `AGENT_JIRA_CONFIG` overrides the config path (default
-   `~/.agent-jira/runner.json`); `AGENT_JIRA_LAUNCH_CMD` overrides the launch command
-   (default `claude`) — handy for a dry run, e.g. `AGENT_JIRA_LAUNCH_CMD=echo
-   scripts/agent-runner.sh` to see the command it would have run without starting a
-   real agent.
+   polls again — so *this process* never launches a second agent on top of one still
+   working. That guarantee is per-instance only: the poll endpoint is read-only and
+   claims nothing, so run at most one runner per account. A failed poll (server down,
+   expired token, or a response that doesn't come back as valid JSON) is logged and
+   retried with backoff rather than killing the loop; a launch that exits almost
+   immediately is treated as a crash rather than finished work and backs off the same
+   way, so a broken `claude` invocation can't spin in a restart loop. Leave it running in
+   a terminal (or under `tmux`, a `launchd` agent, or a `systemd --user` unit) on
+   whatever machine should cold-start agents. `AGENT_JIRA_CONFIG` overrides the config
+   path (default `~/.agent-jira/runner.json`); `AGENT_JIRA_LAUNCH_CMD` overrides the
+   launch command (default `claude`) — handy for a dry run, e.g.
+   `AGENT_JIRA_LAUNCH_CMD=echo scripts/agent-runner.sh` to see the command it would have
+   run without starting a real agent.
+
+   The token is passed to `curl` as a header argument, which means it's visible to
+   anyone on the same machine who can run `ps` while a poll is in flight — fine on a
+   single-user box, worth knowing on a shared one. If that matters for your setup, have
+   `curl` read the header from a file instead (`curl -K <(printf 'header = "Authorization: Bearer %s"' "$TOKEN")`
+   rather than `-H "Authorization: Bearer $TOKEN"`) — `-K`'s contents never show up in
+   `ps`. The `chmod 600` above still matters regardless — it's what keeps the token
+   off-limits at rest.
 
 ## How the board works
 
