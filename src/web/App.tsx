@@ -1,20 +1,34 @@
+import {useEffect} from 'react';
 import {Wordmark} from './components/Wordmark.js';
+import {safeNextPath} from './lib/next-path.js';
 import {useMe} from './lib/queries.js';
 import {AuthScreen} from './screens/AuthScreen.js';
 import {BoardScreen} from './screens/BoardScreen.js';
+import {ConsentScreen} from './screens/ConsentScreen.js';
 
 /**
- * No router by design: the app is a single screen tree plus one standalone path. Task 12
- * adds the OAuth consent view as the other branch of this switch:
- *
- *   if (window.location.pathname === '/consent') return <ConsentScreen />;
+ * No router by design: the app is a single screen tree plus one standalone path. The
+ * OAuth consent view is that path — it is reached only by a redirect from
+ * `GET /oauth/authorize`, and it must never share a frame with the board.
  */
 export function App() {
+  if (window.location.pathname === '/consent') return <ConsentScreen />;
+
   return <Session />;
 }
 
 function Session() {
   const me = useMe();
+  const signedIn = Boolean(me.data);
+
+  // `GET /oauth/authorize` sends an unauthenticated browser here with the request it
+  // interrupted parked in `next`. Once there is a session, hand it back — a full page
+  // load, because the destination is a server route, not a screen in this tree.
+  useEffect(() => {
+    if (!signedIn) return;
+    const next = safeNextPath(window.location.search);
+    if (next) window.location.assign(next);
+  }, [signedIn]);
 
   if (me.isPending) return <Booting />;
   if (me.isError) return <SessionUnavailable />;

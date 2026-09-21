@@ -14,6 +14,11 @@ export default defineConfig({
     proxy: {
       '/api': {target: API_ORIGIN, changeOrigin: false},
       '/ws': {target: API_ORIGIN, ws: true, changeOrigin: false},
+      // The OAuth endpoints live on the API, but `/consent` is a screen in this SPA, so
+      // the whole authorization flow has to run against one origin in dev too — without
+      // these the redirect out of `/oauth/authorize` would land on a port with no app.
+      '/oauth': {target: API_ORIGIN, changeOrigin: false},
+      '/.well-known': {target: API_ORIGIN, changeOrigin: false},
     },
   },
 });

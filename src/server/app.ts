@@ -6,6 +6,7 @@ import {authRoutes} from './routes/auth.js';
 import {projectRoutes} from './routes/projects.js';
 import {storyRoutes} from './routes/stories.js';
 import {boardRoutes} from './routes/board.js';
+import {oauthRoutes} from './routes/oauth.js';
 import {registerWsRoute, type WsRouteOptions} from './routes/ws.js';
 import {EventHub} from './events/hub.js';
 import {warmDummyHash} from './services/auth.js';
@@ -44,6 +45,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   await app.register(projectRoutes);
   await app.register(storyRoutes);
   await app.register(boardRoutes);
+  await app.register(oauthRoutes, {config});
   await registerWsRoute(app, {wsHeartbeatIntervalMs: opts.wsHeartbeatIntervalMs});
 
   app.get('/api/health', async () => {

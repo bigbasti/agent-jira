@@ -85,6 +85,18 @@ describe('api', () => {
     expect(err.message).toMatch(/reach the server/i);
   });
 
+  it("prefers an OAuth error_description over the generic line for its code", async () => {
+    const fetchMock = mockFetch();
+    fetchMock.mockResolvedValue(
+      jsonResponse(400, {error: 'invalid_request', error_description: 'The authorization request is invalid.'}),
+    );
+
+    const err = (await api.get('/api/oauth/consent').catch((e: unknown) => e)) as ApiError;
+
+    expect(err.code).toBe('invalid_request');
+    expect(err.message).toBe('The authorization request is invalid.');
+  });
+
   it('deletes with the DELETE verb and no body', async () => {
     const fetchMock = mockFetch();
     fetchMock.mockResolvedValue(jsonResponse(204));

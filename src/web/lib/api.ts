@@ -35,6 +35,8 @@ interface ErrorBody {
   error?: unknown;
   message?: unknown;
   reason?: unknown;
+  /** OAuth's human-readable half (RFC 6749 §5.2) — written by this server, for a person. */
+  error_description?: unknown;
 }
 
 /**
@@ -54,9 +56,12 @@ function firstSentence(...candidates: unknown[]): string | undefined {
 function toApiError(status: number, payload: unknown): ApiError {
   const body = (typeof payload === 'object' && payload !== null ? payload : {}) as ErrorBody;
   const code = typeof body.error === 'string' ? body.error : 'unknown';
-  const serverReason = CODES_WITH_HUMAN_REASON.has(code)
-    ? firstSentence(body.message, body.reason)
-    : undefined;
+  // An `error_description` only ever comes from this app's OAuth endpoints, where it is
+  // the sentence written for the person reading the consent screen — always preferred
+  // over the generic line the table would supply for the same code.
+  const serverReason =
+    firstSentence(body.error_description) ??
+    (CODES_WITH_HUMAN_REASON.has(code) ? firstSentence(body.message, body.reason) : undefined);
   const message = serverReason ?? MESSAGES[code] ?? FALLBACK_MESSAGE;
   return new ApiError(status, code, message);
 }

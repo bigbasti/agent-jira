@@ -7,6 +7,7 @@ import {jsonResponse, mockFetch, renderWithClient} from './testing/render.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.history.replaceState({}, '', '/');
 });
 
 const USER = {id: 'u1', email: 'dev@example.com', createdAt: 1};
@@ -38,6 +39,25 @@ describe('App', () => {
     renderWithClient(<App />);
 
     expect(await screen.findByRole('heading', {name: /Draft/})).toBeInTheDocument();
+    expect(screen.queryByRole('tab', {name: 'Sign in'})).toBeNull();
+  });
+
+  it('hands /consent to the consent screen, not to the board', async () => {
+    window.history.replaceState({}, '', '/consent?client_id=cid-123&redirect_uri=http%3A%2F%2F127.0.0.1%3A1%2Fcb');
+    routeFetch({
+      '/api/oauth/consent?client_id=cid-123&redirect_uri=http%3A%2F%2F127.0.0.1%3A1%2Fcb': () =>
+        jsonResponse(200, {
+          clientId: 'cid-123',
+          clientName: 'Claude Code',
+          redirectUri: 'http://127.0.0.1:1/cb',
+          permissions: [{id: 'board:read', label: 'Read your board'}],
+          defaultAgentName: 'Claude Code',
+          maxAgentNameLength: 60,
+        }),
+    });
+    renderWithClient(<App />);
+
+    expect(await screen.findByRole('button', {name: 'Allow'})).toBeInTheDocument();
     expect(screen.queryByRole('tab', {name: 'Sign in'})).toBeNull();
   });
 
