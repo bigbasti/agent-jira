@@ -2,7 +2,7 @@ import {QueryClientProvider, type QueryClient} from '@tanstack/react-query';
 import {act, renderHook, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {BOARD_KEY, storyUpdatesKey, useMoveStory} from './board-queries.js';
+import {BOARD_KEY, STORY_UPDATES_KEY_ROOT, storyUpdatesKey, useMoveStory} from './board-queries.js';
 import {useLiveBoard, type LiveSocket} from './useLiveBoard.js';
 import {makeAgent, makeBoard, makeStory, makeUpdate} from '../testing/fixtures.js';
 import {createTestQueryClient, deferred, jsonResponse, mockFetch} from '../testing/render.js';
@@ -211,6 +211,21 @@ describe('useLiveBoard — cache patches', () => {
     ]);
   });
 
+  it('appends a story.update only once, however many times it arrives', () => {
+    const seed = makeBoard({stories: [makeStory({id: 's1'})]});
+    const {client, sockets} = renderLiveBoard(seed);
+    const remark = makeUpdate({id: 'u1', storyId: 's1', body: 'Please add a README.'});
+    // What the tab that posted the remark already has: the mutation's own response,
+    // written into the timeline by `useAddRemark`. The `story.update` frame that same
+    // write published then arrives here — the same update, not a second one.
+    client.setQueryData(storyUpdatesKey('s1'), [remark]);
+    socketAt(sockets, 0).emitOpen();
+
+    socketAt(sockets, 0).emitMessage({type: 'story.update', storyId: 's1', update: remark});
+
+    expect(client.getQueryData(storyUpdatesKey('s1'))).toEqual([remark]);
+  });
+
   it('does not create a timeline cache entry for a story nobody is watching', () => {
     const seed = makeBoard({stories: [makeStory({id: 's1'})]});
     const {client, sockets} = renderLiveBoard(seed);
@@ -282,6 +297,21 @@ describe('useLiveBoard — reconnect', () => {
     socketAt(sockets, 1).emitOpen();
 
     expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({queryKey: BOARD_KEY}));
+  });
+
+  it('refetches an open story’s timeline after a reconnect too', async () => {
+    const {client, sockets} = renderLiveBoard(makeBoard());
+    // A detail dialog open across the drop: every update that arrived while the socket
+    // was down was missed, and the board refetch does not carry timelines.
+    client.setQueryData(storyUpdatesKey('s1'), [makeUpdate({id: 'u1', storyId: 's1'})]);
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    socketAt(sockets, 0).emitOpen();
+
+    socketAt(sockets, 0).emitClose();
+    await vi.advanceTimersByTimeAsync(1000);
+    socketAt(sockets, 1).emitOpen();
+
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({queryKey: STORY_UPDATES_KEY_ROOT}));
   });
 
   it('reports disconnected while waiting to reconnect', () => {

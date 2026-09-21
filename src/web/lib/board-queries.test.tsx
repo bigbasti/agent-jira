@@ -2,10 +2,19 @@ import {QueryClientProvider, type QueryClient} from '@tanstack/react-query';
 import {renderHook, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {BOARD_KEY, upsertAgent, useBoard, useMoveStory, usePlayStory, useStopStory} from './board-queries.js';
-import {makeAgent, makeBoard, makeStory} from '../testing/fixtures.js';
+import {
+  BOARD_KEY,
+  storyUpdatesKey,
+  upsertAgent,
+  useAddRemark,
+  useBoard,
+  useMoveStory,
+  usePlayStory,
+  useStopStory,
+} from './board-queries.js';
+import {makeAgent, makeBoard, makeStory, makeUpdate} from '../testing/fixtures.js';
 import {createTestQueryClient, deferred, jsonResponse, mockFetch} from '../testing/render.js';
-import type {BoardSnapshot, Story} from '../../shared/types.js';
+import type {BoardSnapshot, Story, StoryUpdate} from '../../shared/types.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -302,6 +311,31 @@ describe('useStopStory', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(fetchMock).toHaveBeenCalledWith('/api/stories/t1/stop', expect.objectContaining({method: 'POST'}));
     expect(storyIn(client, 't1').stopRequested).toBe(true);
+  });
+});
+
+describe('useAddRemark', () => {
+  it('appends the posted remark to the story’s timeline exactly once', async () => {
+    const posted = makeUpdate({id: 'u9', storyId: 't1', kind: 'remark', body: 'Looks good.'});
+    const client = createTestQueryClient();
+    client.setQueryData(storyUpdatesKey('t1'), [makeUpdate({id: 'u1', storyId: 't1', body: 'first'})]);
+    const fetchMock = mockFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST' && String(input) === '/api/stories/t1/updates') return jsonResponse(201, posted);
+      throw new Error(`unexpected request: ${init?.method ?? 'GET'} ${String(input)}`);
+    });
+    const wrapper = ({children}: {children: ReactNode}) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const {result} = renderHook(() => useAddRemark('t1'), {wrapper});
+
+    // The `story.update` frame the same write published beats the response home — the
+    // live socket has already put this exact update in the timeline.
+    client.setQueryData<StoryUpdate[]>(storyUpdatesKey('t1'), (updates = []) => [...updates, posted]);
+    result.current.mutate('Looks good.');
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData<StoryUpdate[]>(storyUpdatesKey('t1'))?.map(update => update.id)).toEqual(['u1', 'u9']);
   });
 });
 

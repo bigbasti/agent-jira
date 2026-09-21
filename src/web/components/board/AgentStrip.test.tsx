@@ -65,6 +65,20 @@ describe('AgentStrip', () => {
     );
   });
 
+  it('says so when the autonomous switch could not be saved', async () => {
+    const fetchMock = mockFetch();
+    fetchMock.mockResolvedValue(jsonResponse(500, {error: 'internal_error', message: 'The board server is down.'}));
+    const user = userEvent.setup();
+    const agent = makeAgent({id: 'a1', name: 'Night shift', autonomous: false});
+
+    renderWithClient(<AgentStrip agents={[agent]} stories={[]} onConnectAgent={() => {}} />);
+    await user.click(screen.getByRole('switch', {name: 'Autonomous'}));
+
+    // Without this the switch just flips back and the human is told nothing.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/autonomous/i);
+    expect(screen.getByRole('switch', {name: 'Autonomous'})).not.toBeChecked();
+  });
+
   it('opens the connect dialog from the empty state', async () => {
     mockFetch();
     const user = userEvent.setup();

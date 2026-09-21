@@ -45,6 +45,14 @@ export function AgentStrip({agents, stories, onConnectAgent}: AgentStripProps) {
           />
         ))
       )}
+      {/* The switch rolls itself back when the server refuses (see `useSetAutonomous`),
+          which on its own looks like a switch that does not work. Saying why is the
+          difference between a bug the human can report and one they just live with. */}
+      {setAutonomous.isError && (
+        <span role="alert" className="shrink-0 text-micro text-rose">
+          Autonomous mode didn’t save{setAutonomous.error?.message ? ` — ${setAutonomous.error.message}` : ''}
+        </span>
+      )}
     </section>
   );
 }

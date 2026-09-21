@@ -1,4 +1,4 @@
-import {useMutation, useQuery, useQueryClient} from '@tanstack/react-query';
+import {useMutation, useQuery, useQueryClient, type QueryClient} from '@tanstack/react-query';
 import {rankBetween} from '../../shared/rank.js';
 import type {Status} from '../../shared/status.js';
 import type {Agent, BoardSnapshot, Project, Story, StoryUpdate} from '../../shared/types.js';
@@ -243,7 +243,34 @@ export function useCreateProject() {
   });
 }
 
-export const storyUpdatesKey = (storyId: string) => ['storyUpdates', storyId] as const;
+/**
+ * The prefix every story timeline is cached under. Invalidating it refetches whichever
+ * story's timeline happens to be open — which is what a reconnect needs, since the board
+ * refetch carries stories but no updates.
+ */
+export const STORY_UPDATES_KEY_ROOT = ['storyUpdates'] as const;
+
+export const storyUpdatesKey = (storyId: string) => [...STORY_UPDATES_KEY_ROOT, storyId] as const;
+
+/**
+ * Appends one update to a story's cached timeline, unless it is already there.
+ *
+ * Every write that appends an update goes through here, because each one arrives twice in
+ * the tab that made it: once as the mutation's response, and once as the `story.update`
+ * frame that same write published over the socket. They are the same row, so the second
+ * arrival must be recognised by `id` rather than appended — otherwise a human's remark
+ * shows up twice in the tab that posted it and once everywhere else.
+ *
+ * An updater that returns `undefined` leaves the cache untouched: a story nobody has
+ * opened has no timeline, and inventing a one-entry one for it would be worse than
+ * nothing. See `QueryClient.setQueryData`.
+ */
+export function appendUpdate(client: QueryClient, storyId: string, update: StoryUpdate): void {
+  client.setQueryData<StoryUpdate[]>(storyUpdatesKey(storyId), updates => {
+    if (!updates) return undefined;
+    return updates.some(existing => existing.id === update.id) ? updates : [...updates, update];
+  });
+}
 
 /** A story's timeline, oldest first — exactly what the server returns, unsorted again here. */
 export function useStoryUpdates(storyId: string, enabled = true) {
@@ -260,7 +287,10 @@ export function useAddRemark(storyId: string) {
   return useMutation<StoryUpdate, ApiError, string>({
     mutationFn: body => api.post<StoryUpdate>(`/api/stories/${encodeURIComponent(storyId)}/updates`, {body}),
     onSuccess: update => {
-      client.setQueryData<StoryUpdate[]>(storyUpdatesKey(storyId), (updates = []) => [...updates, update]);
+      // Seeds the timeline when the dialog is open but empty, and otherwise appends —
+      // once, even when the socket's copy of this same update got here first.
+      client.setQueryData<StoryUpdate[]>(storyUpdatesKey(storyId), updates => updates ?? []);
+      appendUpdate(client, storyId, update);
     },
   });
 }

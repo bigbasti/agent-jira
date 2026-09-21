@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react';
 import {useQueryClient, type QueryClient} from '@tanstack/react-query';
-import {BOARD_KEY, storyUpdatesKey, upsertAgent, upsertStory} from './board-queries.js';
-import type {BoardSnapshot, ServerEvent, StoryUpdate} from '../../shared/types.js';
+import {appendUpdate, BOARD_KEY, STORY_UPDATES_KEY_ROOT, upsertAgent, upsertStory} from './board-queries.js';
+import type {BoardSnapshot, ServerEvent} from '../../shared/types.js';
 
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 15_000;
@@ -74,13 +74,11 @@ function applyServerEvent(client: QueryClient, event: ServerEvent): void {
       return;
 
     // Only appended when that story's timeline is already cached (i.e. its detail dialog
-    // has been opened at least once) — an updater that returns `undefined` leaves the
-    // cache untouched instead of creating a new, partial entry for a story nobody is
-    // watching. See `QueryClient.setQueryData`.
+    // has been opened at least once), and only when it is not already there: the tab that
+    // posted a remark also gets it back as the mutation's response, and both are the same
+    // row. See `appendUpdate`.
     case 'story.update':
-      client.setQueryData<StoryUpdate[]>(storyUpdatesKey(event.storyId), updates =>
-        updates ? [...updates, event.update] : undefined,
-      );
+      appendUpdate(client, event.storyId, event.update);
       return;
 
     case 'agent.updated':
@@ -106,8 +104,8 @@ function applyServerEvent(client: QueryClient, event: ServerEvent): void {
 /**
  * Keeps the `['board']` cache live over `/ws`: one connection per mounted instance,
  * reconnecting on drop with exponential backoff (1s, 2s, 4s, … capped at 15s) and
- * refetching the whole board on every reconnect so any event missed while disconnected
- * self-heals. Every other event patches the cache surgically — see `applyServerEvent`.
+ * refetching the whole board — plus any open story's timeline — on every reconnect so
+ * anything missed while disconnected self-heals. Every other event patches the cache surgically — see `applyServerEvent`.
  */
 export function useLiveBoard(options: UseLiveBoardOptions = {}): {connected: boolean} {
   const client = useQueryClient();
@@ -126,8 +124,14 @@ export function useLiveBoard(options: UseLiveBoardOptions = {}): {connected: boo
       attempt = 0;
       setConnected(true);
       // The very first connect is covered by the board's own initial load; only a
-      // reconnect — after the socket dropped — needs a refetch to self-heal.
-      if (everConnected) void client.invalidateQueries({queryKey: BOARD_KEY});
+      // reconnect — after the socket dropped — needs a refetch to self-heal. The open
+      // story's timeline is refetched too: a detail dialog left open across the drop
+      // missed every `story.update` that arrived meanwhile, and the board snapshot does
+      // not carry timelines.
+      if (everConnected) {
+        void client.invalidateQueries({queryKey: BOARD_KEY});
+        void client.invalidateQueries({queryKey: STORY_UPDATES_KEY_ROOT});
+      }
       everConnected = true;
     }
 
