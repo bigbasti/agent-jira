@@ -11,13 +11,20 @@ import type {Agent, AgentStatus} from '../../shared/types.js';
  * result carries this block — it is the only way a stop request or a human's remark
  * reaches the agent between two tool calls.
  */
+/** One remark the human typed, tagged with the story it was written on. */
+export interface Remark {
+  story_id: string;
+  story_title: string;
+  body: string;
+}
+
 export interface ControlBlock {
   /** The human pressed Stop on this story; the agent must release it and stop. */
   stop_requested: boolean;
   /** The agent may claim its next story without asking. */
   autonomous: boolean;
-  /** Remarks the human typed on the story since this agent last heard from us. */
-  remarks: string[];
+  /** Remarks the human typed on any of their stories since this agent last heard from us. */
+  remarks: Remark[];
 }
 
 export interface ControlBlockInput {
@@ -27,7 +34,10 @@ export interface ControlBlockInput {
   storyId?: string | null;
 }
 
-const EMPTY_CONTROL: ControlBlock = {stop_requested: false, autonomous: false, remarks: []};
+/** The control block that claims nothing: no stop, not autonomous, no remarks. */
+export function emptyControl(): ControlBlock {
+  return {stop_requested: false, autonomous: false, remarks: []};
+}
 
 function toAgent(row: typeof agents.$inferSelect): Agent {
   return {
@@ -86,10 +96,17 @@ export function updateAgent(
 /**
  * Builds the control block for one tool call and advances the agent's delivery watermark.
  *
- * Remarks are the `story_updates` of kind `remark` on the story in context that were
- * created after `agents.last_seen_at`; the watermark then moves forward, so each remark
- * reaches the agent exactly once. Delivering one twice makes an agent redo work it has
- * already done; never delivering one strands the human, so both halves matter.
+ * Remarks are the `story_updates` of kind `remark` on **any** of the user's stories that
+ * were created after `agents.last_seen_at`; the watermark then moves forward, so each
+ * remark reaches the agent exactly once. Delivering one twice makes an agent redo work it
+ * has already done; never delivering one strands the human, so both halves matter.
+ *
+ * Reading across every story rather than only the story in context is what makes the
+ * second half true. There is one watermark per agent and it advances on every call, so a
+ * remark left on a queued story while the agent works on another one would otherwise sink
+ * below the watermark and never be delivered at all — the human would see their remark on
+ * the card and never get an answer. Each remark therefore carries the story it belongs to,
+ * and the agent decides when to act on it.
  *
  * The new watermark is `max(now - 1, newest delivered remark)`, not `now`:
  *
@@ -108,7 +125,7 @@ export function updateAgent(
  */
 export function controlBlock(db: Database, {userId, agentId, storyId}: ControlBlockInput): ControlBlock {
   const agent = findOwnedAgent(db, userId, agentId);
-  if (!agent) return {...EMPTY_CONTROL};
+  if (!agent) return emptyControl();
 
   const contextStoryId = storyId ?? agent.currentStoryId;
   const story = contextStoryId
@@ -120,23 +137,21 @@ export function controlBlock(db: Database, {userId, agentId, storyId}: ControlBl
     : undefined;
 
   const since = agent.lastSeenAt ?? 0;
-  const remarkRows =
-    story && contextStoryId
-      ? db
-          .select({body: storyUpdates.body, createdAt: storyUpdates.createdAt})
-          .from(storyUpdates)
-          .where(
-            and(
-              eq(storyUpdates.storyId, contextStoryId),
-              eq(storyUpdates.kind, 'remark'),
-              gt(storyUpdates.createdAt, since),
-            ),
-          )
-          // Same tie-break as the story timeline: two remarks can share a millisecond,
-          // and the human's order is the insertion order.
-          .orderBy(storyUpdates.createdAt, sql`rowid`)
-          .all()
-      : [];
+  const remarkRows = db
+    .select({
+      body: storyUpdates.body,
+      createdAt: storyUpdates.createdAt,
+      storyId: storyUpdates.storyId,
+      storyTitle: stories.title,
+    })
+    .from(storyUpdates)
+    // The join is what scopes remarks to this user: `story_updates` has no user of its own.
+    .innerJoin(stories, and(eq(stories.id, storyUpdates.storyId), eq(stories.userId, userId)))
+    .where(and(eq(storyUpdates.kind, 'remark'), gt(storyUpdates.createdAt, since)))
+    // Same tie-break as the story timeline: two remarks can share a millisecond, and the
+    // human's order is the insertion order. Qualified, because the join has two rowids.
+    .orderBy(storyUpdates.createdAt, sql`story_updates.rowid`)
+    .all();
 
   const now = Date.now();
   const newestDelivered = remarkRows.reduce((max, row) => Math.max(max, row.createdAt), Number.NEGATIVE_INFINITY);
@@ -149,6 +164,6 @@ export function controlBlock(db: Database, {userId, agentId, storyId}: ControlBl
   return {
     stop_requested: story?.stopRequested ?? false,
     autonomous: agent.autonomous,
-    remarks: remarkRows.map(row => row.body),
+    remarks: remarkRows.map(row => ({story_id: row.storyId, story_title: row.storyTitle, body: row.body})),
   };
 }

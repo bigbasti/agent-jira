@@ -53,7 +53,7 @@ export async function mcpRoutes(app: FastifyInstance, opts: McpRouteOptions): Pr
     const identity = authenticate(req, reply);
     if (!identity) return reply;
 
-    const server = buildMcpServer({db: app.db, hub: app.hub, ...identity});
+    const server = buildMcpServer({db: app.db, hub: app.hub, log: app.log, ...identity});
     const transport = new StreamableHTTPServerTransport({
       // Stateless: no session id is issued, and none is expected back.
       sessionIdGenerator: undefined,

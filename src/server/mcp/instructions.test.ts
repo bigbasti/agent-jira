@@ -88,6 +88,27 @@ describe('instructions', () => {
     expect(INSTRUCTIONS).toMatch(/ask (your )?human/i);
   });
 
+  it('says the human owns the move into todo', () => {
+    expect(INSTRUCTIONS).toMatch(/your human owns the first move/i);
+    expect(INSTRUCTIONS).toMatch(/drag(s)? it to `?todo`?/i);
+  });
+
+  it('says a stop and a remark only arrive in a tool result', () => {
+    expect(INSTRUCTIONS).toMatch(/only reach you \*?in the result of a tool call/i);
+    expect(INSTRUCTIONS).toMatch(/heads-down|long stretch/i);
+  });
+
+  it('says a release takes a reason', () => {
+    expect(INSTRUCTIONS).toMatch(/`release_story` with a reason/);
+  });
+
+  it('says a remark may be about a story the agent is not holding', () => {
+    expect(INSTRUCTIONS).toContain('story_id');
+    expect(INSTRUCTIONS).toContain('story_title');
+    expect(INSTRUCTIONS).toMatch(/may also be about another story/i);
+    expect(INSTRUCTIONS).toMatch(/act on it when you claim that story/i);
+  });
+
   it('names the tools it tells the agent to call', () => {
     for (const tool of ['wait_for_work', 'claim_next_story', 'move_story', 'post_progress', 'release_story']) {
       expect(INSTRUCTIONS).toContain(tool);

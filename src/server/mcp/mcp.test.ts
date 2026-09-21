@@ -12,10 +12,16 @@ import {clampTimeoutSeconds} from './tools.js';
 import {controlBlock} from './control.js';
 import type {Project, ServerEvent, Story, StoryUpdate} from '../../shared/types.js';
 
+interface Remark {
+  story_id: string;
+  story_title: string;
+  body: string;
+}
+
 interface Control {
   stop_requested: boolean;
   autonomous: boolean;
-  remarks: string[];
+  remarks: Remark[];
 }
 
 type WithControl<T> = T & {control: Control};
@@ -590,6 +596,123 @@ describe('mcp server', () => {
       }
     });
 
+    it('is present on an input-validation failure, in a parseable result', async () => {
+      const {cookie, user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Add login');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      const stopped = await h.app.inject({method: 'POST', url: `/api/stories/${story.id}/stop`, headers: {cookie}});
+      expect(stopped.statusCode).toBe(200);
+
+      // A malformed call is exactly when an agent must still learn that it was stopped.
+      const missingReason = await call<{error: string; message: string}>(client, 'move_story', {
+        storyId: story.id,
+        status: 'in_test',
+      });
+      expect(missingReason.isError).toBe(true);
+      expect(missingReason.data.error).toBe('invalid_request');
+      expect(missingReason.data.message).toMatch(/reason/i);
+      expect(missingReason.data.control.stop_requested).toBe(true);
+
+      for (const [name, args] of [
+        ['post_progress', {storyId: story.id, progressPct: 10}],
+        ['post_progress', {storyId: story.id, progressPct: 150, label: 'Nearly'}],
+        ['release_story', {storyId: story.id}],
+        ['get_story', {}],
+        ['set_agent_mode', {}],
+      ] as Array<[string, Record<string, unknown>]>) {
+        const result = await call<{error: string; message: string}>(client, name, args);
+        expect(result.isError, `tool ${name}`).toBe(true);
+        expect(result.data.error, `tool ${name}`).toBe('invalid_request');
+        expect(result.data.control, `tool ${name}`).toBeDefined();
+        expect(result.data.message.length, `tool ${name}`).toBeGreaterThan(0);
+      }
+
+      expect(storyRow(story.id).status).toBe('in_progress');
+      expect(storyRow(story.id).progressPct).toBe(0);
+    });
+
+    it('says what is actually wrong with the arguments', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Add login');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      const missing = await call<{message: string}>(client, 'post_progress', {storyId: story.id, progressPct: 40});
+      expect(missing.data.message).toMatch(/label is required/i);
+
+      const empty = await call<{message: string}>(client, 'move_story', {
+        storyId: story.id,
+        status: 'in_test',
+        reason: '   ',
+      });
+      // An empty reason is not a missing one, and the message must not say it is.
+      expect(empty.data.message).toMatch(/must not be empty/i);
+      expect(empty.data.message).not.toMatch(/is required/i);
+
+      const outOfRange = await call<{message: string}>(client, 'post_progress', {
+        storyId: story.id,
+        progressPct: 150,
+        label: 'Nearly',
+      });
+      expect(outOfRange.data.message).toMatch(/between 0 and 100/i);
+      expect(outOfRange.data.message).not.toMatch(/is required/i);
+    });
+
+    it('keeps the control block when an argument has the wrong type', async () => {
+      const {cookie, user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Add login');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+      await h.app.inject({method: 'POST', url: `/api/stories/${story.id}/stop`, headers: {cookie}});
+
+      const wrongNumber = await call<{error: string; message: string}>(client, 'post_progress', {
+        storyId: story.id,
+        progressPct: 'fifty',
+        label: 'Nearly',
+      });
+      expect(wrongNumber.isError).toBe(true);
+      expect(wrongNumber.data.error).toBe('invalid_request');
+      expect(wrongNumber.data.message).toMatch(/whole number between 0 and 100/i);
+      expect(wrongNumber.data.control.stop_requested).toBe(true);
+
+      const wrongStatus = await call<{error: string; message: string}>(client, 'move_story', {
+        storyId: story.id,
+        status: 'done',
+        reason: 'Trying a column that does not exist',
+      });
+      expect(wrongStatus.isError).toBe(true);
+      expect(wrongStatus.data.message).toMatch(/in_progress/);
+      expect(wrongStatus.data.control.stop_requested).toBe(true);
+      expect(storyRow(story.id).status).toBe('in_progress');
+    });
+
+    it('turns an unexpected server failure into a clean internal error', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Add login');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      // Stands in for any failure the service layer does not model — a locked database,
+      // a missing table after a bad deploy.
+      h.db.$client.exec('DROP TABLE story_updates');
+
+      const result = await call<{error: string; message: string}>(client, 'post_update', {
+        storyId: story.id,
+        body: 'This cannot be written',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.data.error).toBe('internal_error');
+      expect(result.data.message).not.toMatch(/story_updates|SQLITE|no such table/i);
+      expect(result.data.control).toBeDefined();
+      expect(typeof result.data.control.stop_requested).toBe('boolean');
+    });
+
     it('is present on a failed tool call too, so a stop still reaches the agent', async () => {
       const {user, project} = await seedUser();
       const story = seedTodoStory(user.id, project.id, 'Add login');
@@ -621,7 +744,9 @@ describe('mcp server', () => {
       });
 
       const first = await ok(client, 'get_board');
-      expect(first.control.remarks).toEqual(['Please reuse the existing session plugin']);
+      expect(first.control.remarks).toEqual([
+        {story_id: story.id, story_title: 'Add login', body: 'Please reuse the existing session plugin'},
+      ]);
 
       const second = await ok(client, 'get_board');
       expect(second.control.remarks).toEqual([]);
@@ -636,7 +761,9 @@ describe('mcp server', () => {
       });
 
       const third = await ok(client, 'get_board');
-      expect(third.control.remarks).toEqual(['And add a test for the empty case']);
+      expect(third.control.remarks).toEqual([
+        {story_id: story.id, story_title: 'Add login', body: 'And add a test for the empty case'},
+      ]);
     });
 
     it('delivers several remarks in the order the human wrote them', async () => {
@@ -658,7 +785,12 @@ describe('mcp server', () => {
       }
 
       const payload = await ok(client, 'get_board');
-      expect(payload.control.remarks).toEqual(['First remark', 'Second remark', 'Third remark']);
+      expect(payload.control.remarks.map(remark => remark.body)).toEqual([
+        'First remark',
+        'Second remark',
+        'Third remark',
+      ]);
+      expect(payload.control.remarks.every(remark => remark.story_id === story.id)).toBe(true);
     });
 
     it('does not deliver an agent’s own notes as remarks', async () => {
@@ -673,6 +805,49 @@ describe('mcp server', () => {
 
       const payload = await ok(client, 'get_board');
       expect(payload.control.remarks).toEqual([]);
+    });
+
+    it('delivers a remark about a story the agent is not holding, tagged and once', async () => {
+      const {user, project} = await seedUser();
+      const working = seedTodoStory(user.id, project.id, 'The story in hand');
+      const queued = seedTodoStory(user.id, project.id, 'A story still in the queue');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      // The human remarks on the queued story while the agent works on another one.
+      addUpdate(h.db, h.app.hub, {
+        userId: user.id,
+        storyId: queued.id,
+        body: 'When you get to this one, keep the old endpoint working',
+        kind: 'remark',
+        authorType: 'user',
+        authorId: user.id,
+      });
+
+      // A tool call about the story in hand must still carry it — otherwise the watermark
+      // moves past it and the human is never answered.
+      const progress = await ok(client, 'post_progress', {
+        storyId: working.id,
+        progressPct: 30,
+        label: 'Working on the other story',
+      });
+      expect(progress.control.remarks).toEqual([
+        {
+          story_id: queued.id,
+          story_title: 'A story still in the queue',
+          body: 'When you get to this one, keep the old endpoint working',
+        },
+      ]);
+
+      // And exactly once: it is not repeated on the next call, nor when that story is claimed.
+      const next = await ok(client, 'get_board');
+      expect(next.control.remarks).toEqual([]);
+
+      await ok(client, 'move_story', {storyId: working.id, status: 'in_test', reason: 'Verifying'});
+      await ok(client, 'move_story', {storyId: working.id, status: 'finished', reason: 'Verified'});
+      const claim = await ok(client, 'claim_next_story', {storyId: queued.id});
+      expect(claim.control.remarks).toEqual([]);
     });
 
     it('reports stop_requested after POST /api/stories/:id/stop', async () => {
@@ -816,6 +991,36 @@ describe('mcp server', () => {
       await ok(client, 'release_story', {storyId: story.id, reason: 'Handing it back'});
       expect(agentRow(agentId).status).toBe('idle');
       expect(agentRow(agentId).currentStoryId).toBeNull();
+    });
+
+    it('stops waiting as soon as the client hangs up', async () => {
+      const {user} = await seedUser();
+      const {agentId, token} = seedAgent(user.id);
+      const controller = new AbortController();
+
+      const request = fetch(`${baseUrl}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {name: 'wait_for_work', arguments: {timeoutSeconds: 55}},
+        }),
+        signal: controller.signal,
+      }).catch(() => undefined);
+
+      await waitUntil(() => agentRow(agentId).status === 'waiting');
+      controller.abort();
+      await request;
+
+      // Without honouring the abort the agent would sit on `waiting` for the full 55s.
+      await waitUntil(() => agentRow(agentId).status === 'idle', 5000);
+      expect(agentRow(agentId).status).toBe('idle');
     });
 
     it('publishes the agent’s status changes on the hub', async () => {
