@@ -137,7 +137,9 @@ clear message, rather than a cryptic failure on its first poll, if either is mis
    ```
 
    Every `pollSeconds` (default 10) it asks the board for the oldest played story nobody
-   is working on. The moment there is one, it runs `claude -p "…"` in that story's
+   is working on — the same play/autonomy rule a connected agent goes through, so if the
+   agent the runner's token belongs to is autonomous it will also cold-start on unplayed
+   work queued in `To do`. The moment there is one, it runs `claude -p "…"` in that story's
    project directory to pick it up, blocking until that agent session ends before it
    polls again — so *this process* never launches a second agent on top of one still
    working. That guarantee is per-instance only: the poll endpoint is read-only and
@@ -171,9 +173,12 @@ an agent to pick up.
 
 From there, a connected agent drives it:
 
-- **To do → In progress**: an agent claims the story (either you clicked **Play** on the
-  card, or the agent is running autonomously and asked for the next one) and starts work,
-  scoped strictly to that story's project directory.
+- **To do → In progress**: an agent claims the story and starts work, scoped strictly to
+  that story's project directory. `To do` on its own is not an invitation: it is your
+  staging column as much as the agents' queue, so a card sitting there is picked up only
+  once you press **Play** on it — or, if that agent's **autonomous** switch is on, once it
+  goes looking for its next story. A connected agent that has nothing played to do parks
+  on the board waiting, without touching anything.
 - **In progress**: the agent posts progress updates as it works — the card's progress bar
   and the story's timeline both come from these. If you leave a remark on the card, the
   agent picks it up the next time it checks in.
@@ -188,9 +193,10 @@ From there, a connected agent drives it:
 Every transition carries a reason the agent writes for you, visible in the story's
 timeline — that's usually the clearest window you get into what it actually did. The
 **Stop** button on an in-progress card asks the agent to hand the story back at its next
-safe checkpoint; the **autonomous** switch on each agent (in the connect-agent dialog)
-controls whether it claims the next story on its own once it finishes one, or waits for
-you to hand it one.
+safe checkpoint, and the story goes back to `To do` unplayed, so nothing picks it straight
+back up. The **autonomous** switch on each agent's pill in the agent strip, along the top
+of the board, controls whether that agent claims work on its own — any unblocked story
+waiting in `To do` — or only ever the ones you hand it with **Play**.
 
 ## Deploying behind a reverse proxy
 
@@ -294,10 +300,16 @@ Other useful scripts:
 ```bash
 npm test          # vitest, once
 npm run test:watch
-npm run typecheck  # both tsconfigs (web + server)
-npm run check      # typecheck + test — what CI (and you, before committing) should run
-npm run build      # what the Docker image runs: vite build + tsc -p tsconfig.server.json
-npm start          # runs the build's output — node dist/server/index.js
+npm run typecheck    # both tsconfigs (web + server)
+npm run check        # typecheck + test — what CI (and you, before committing) should run
+npm run build        # what the Docker image runs: vite build + tsc -p tsconfig.server.json
+npm start            # runs the build's output — node dist/server/index.js
+npm run db:generate  # write a migration for the current schema.ts
+npm run db:migrate   # apply pending migrations to DATABASE_PATH (the server also does
+                     # this at boot; this is for doing it deliberately, ahead of a deploy)
+npm run docker:build # docker compose build
+npm run docker:up    # docker compose up -d
+npm run smoke        # scripts/smoke-test.sh, against the Compose stack
 ```
 
 To try the actual container locally without going through Compose:
@@ -310,6 +322,7 @@ docker run --rm -p 3000:3000 \
   agent-jira
 ```
 
-`scripts/smoke-test.sh` builds the Compose stack, waits for it to come up, and exercises
-health, registration, the served SPA, and the OAuth metadata endpoint — run it after
-touching anything in the Dockerfile or compose file.
+`scripts/smoke-test.sh` (or `npm run smoke`) builds the Compose stack, waits for it to come
+up, and exercises health, registration, creating a project and a story, the served SPA, and
+the OAuth metadata endpoint — run it after touching anything in the Dockerfile or compose
+file.
