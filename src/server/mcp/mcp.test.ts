@@ -321,8 +321,10 @@ describe('mcp server', () => {
       const {agentId, token} = seedAgent(user.id);
       const client = await connect(token);
 
-      const payload = await ok<{claimed: boolean; story: Story | null}>(client, 'claim_next_story');
+      const payload = await ok<{claimed: boolean; story: Story | null; reason: string}>(client, 'claim_next_story');
       expect(payload.claimed).toBe(false);
+      // The reason an agent reads has to name the actual rule, or it will keep retrying.
+      expect(payload.reason).toMatch(/played/i);
       expect(storyRow(parked.id).status).toBe('todo');
       expect(agentRow(agentId).currentStoryId).toBeNull();
 

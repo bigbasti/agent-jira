@@ -566,7 +566,10 @@ function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
       payload: {
         claimed: false,
         story: null,
-        reason: 'No unblocked story is waiting in todo. Call wait_for_work to park until one is.',
+        reason:
+          'No story in todo is waiting for you: it is empty, everything in it is blocked or already ' +
+          'claimed, or nothing has been played and you are not autonomous. This is a normal answer, ' +
+          'not a fault. Call wait_for_work to park until your human hands you something.',
       },
       storyId: null,
     };
