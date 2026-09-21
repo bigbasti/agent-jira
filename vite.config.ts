@@ -19,6 +19,9 @@ export default defineConfig({
       // these the redirect out of `/oauth/authorize` would land on a port with no app.
       '/oauth': {target: API_ORIGIN, changeOrigin: false},
       '/.well-known': {target: API_ORIGIN, changeOrigin: false},
+      // And the MCP endpoint with them: an agent connects to `http://localhost:5173/mcp`
+      // in dev, so the resource, the metadata and the consent screen share this origin.
+      '/mcp': {target: API_ORIGIN, changeOrigin: false},
     },
   },
 });

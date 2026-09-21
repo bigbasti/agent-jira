@@ -292,7 +292,9 @@ npm run dev
 This runs the API (`tsx watch`, auto-restarting on server changes) and Vite's dev server
 side by side; Vite proxies `/api`, `/ws`, `/oauth` and `/.well-known` to the API so the
 whole app — board and OAuth consent screen included — works at http://localhost:5173
-without a build. SQLite migrations run automatically at boot against
+without a build. `npm run dev` points `PUBLIC_URL` at that origin too, so connect an agent
+in dev with `claude mcp add --transport http agent-jira http://localhost:5173/mcp` — not
+`:3000`, where there is no consent screen to send you to. SQLite migrations run automatically at boot against
 `DATABASE_PATH` (`./data/agent-jira.db` by default).
 
 Other useful scripts:
