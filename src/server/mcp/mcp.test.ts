@@ -220,6 +220,7 @@ describe('mcp server', () => {
           'post_update',
           'release_story',
           'set_agent_mode',
+          'start_story',
           'wait_for_work',
         ].sort(),
       );
@@ -236,6 +237,8 @@ describe('mcp server', () => {
       expect(byName.get('post_progress')).toMatch(/progress bar|every meaningful step/i);
       expect(byName.get('release_story')).toMatch(/stop_requested|stop/i);
       expect(byName.get('claim_next_story')).toMatch(/project\.path|clear/i);
+      expect(byName.get('start_story')).toMatch(/directly/i);
+      expect(byName.get('start_story')).toMatch(/never .*own initiative/i);
     });
   });
 
@@ -517,6 +520,97 @@ describe('mcp server', () => {
 
       const timeline = h.db.select().from(storyUpdates).where(eq(storyUpdates.storyId, story.id)).all();
       expect(timeline.some(update => update.body.includes('Stopped on request'))).toBe(true);
+    });
+  });
+
+  describe('starting work the human asked for directly', () => {
+    it('creates the story in in_progress, at the top, claimed by the agent', async () => {
+      const {user, project} = await seedUser();
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+      const events: ServerEvent[] = [];
+      h.app.hub.subscribe(user.id, event => events.push(event));
+
+      // Something else is already in progress; the new card must land above it.
+      const other = seedTodoStory(user.id, project.id, 'Already running');
+      moveStory(h.db, h.app.hub, {userId: user.id, storyId: other.id, status: 'in_progress', actor: 'user'});
+
+      const payload = await ok<{story: Story; project: Project}>(client, 'start_story', {
+        projectId: project.id,
+        title: 'Fix the login redirect',
+        description: 'Asked for in the terminal.',
+      });
+
+      expect(payload.story.status).toBe('in_progress');
+      expect(payload.story.title).toBe('Fix the login redirect');
+      expect(payload.story.description).toBe('Asked for in the terminal.');
+      expect(payload.project.path).toBe(project.path);
+      expect(storyRow(payload.story.id).claimedByAgentId).toBe(agentId);
+      expect(storyRow(payload.story.id).rank < storyRow(other.id).rank).toBe(true);
+      expect(agentRow(agentId).currentStoryId).toBe(payload.story.id);
+      expect(agentRow(agentId).status).toBe('working');
+      expect(events.some(event => event.type === 'story.created' && event.story.id === payload.story.id)).toBe(true);
+
+      const timeline = h.db.select().from(storyUpdates).where(eq(storyUpdates.storyId, payload.story.id)).all();
+      expect(timeline.some(update => update.authorType === 'agent' && /directly/i.test(update.body))).toBe(true);
+    });
+
+    it('then runs through the board like any claimed story', async () => {
+      const {user, project} = await seedUser();
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const {story} = await ok<{story: Story}>(client, 'start_story', {projectId: project.id, title: 'Tidy up'});
+      await ok(client, 'post_progress', {storyId: story.id, progressPct: 40, label: 'halfway'});
+      for (const status of ['in_test', 'finished'] as const) {
+        await ok(client, 'move_story', {storyId: story.id, status, reason: 'Moving along'});
+      }
+      expect(storyRow(story.id).status).toBe('finished');
+      expect(storyRow(story.id).progressPct).toBe(40);
+      // Handed over for review: the claim goes with it, exactly as for a claimed story.
+      expect(storyRow(story.id).claimedByAgentId).toBeNull();
+      expect(agentRow(agentId).currentStoryId).toBeNull();
+    });
+
+    it('refuses while the agent is still working on another story', async () => {
+      const {user, project} = await seedUser();
+      const held = seedTodoStory(user.id, project.id, 'Held');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      const result = await rawCall(client, 'start_story', {projectId: project.id, title: 'Second thing'});
+      expect(result.isError).toBe(true);
+      expect(result.text).toMatch(/already working on/i);
+      expect(agentRow(agentId).currentStoryId).toBe(held.id);
+      expect(h.db.select().from(stories).all().some(row => row.title === 'Second thing')).toBe(false);
+    });
+
+    it('refuses another user’s project', async () => {
+      const {user} = await seedUser();
+      const {project: foreign} = await seedUser('other@example.com');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const {isError, data} = await call(client, 'start_story', {projectId: foreign.id, title: 'Sneaky'});
+      expect(isError).toBe(true);
+      expect(data).toMatchObject({error: 'not_found'});
+      expect(agentRow(agentId).currentStoryId).toBeNull();
+    });
+
+    it('requires a project and a title', async () => {
+      const {user, project} = await seedUser();
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const noProject = await call(client, 'start_story', {title: 'Orphan'});
+      expect(noProject.isError).toBe(true);
+      expect(noProject.data).toMatchObject({error: 'invalid_request'});
+      expect(String(noProject.data.message)).toMatch(/projectId/);
+
+      const noTitle = await call(client, 'start_story', {projectId: project.id, title: '  '});
+      expect(noTitle.isError).toBe(true);
+      expect(String(noTitle.data.message)).toMatch(/title/i);
     });
   });
 

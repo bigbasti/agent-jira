@@ -15,6 +15,7 @@ import {
   listUpdates,
   moveStory,
   postProgress,
+  startStoryForAgent,
 } from '../services/stories.js';
 import {controlBlock, emptyControl, findOwnedAgent, updateAgent, type ControlBlock} from './control.js';
 import {STATUSES} from '../../shared/status.js';
@@ -289,6 +290,17 @@ const releaseArgs = z.object({
     .trim()
     .min(1, 'The reason must not be empty: it is recorded on the story.'),
 });
+const startArgs = z.object({
+  projectId: z
+    .string(absent('projectId is required: the id of the project the work belongs to (see list_projects).'))
+    .trim()
+    .min(1, 'projectId must not be empty.'),
+  title: z
+    .string(absent('A title is required: the card title your human will see on the board.'))
+    .trim()
+    .min(1, 'The title must not be empty: it is the card title your human will see on the board.'),
+  description: z.string().optional(),
+});
 const modeArgs = z.object({autonomous: z.boolean(absent('autonomous is required: true or false.'))});
 
 /** Registers every tool an agent may call. This list is the whole agent-facing API. */
@@ -372,6 +384,33 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
       },
     },
     async args => respond(ctx, args.storyId, () => claimStory(ctx, claimArgs.parse(args).storyId)),
+  );
+
+  server.registerTool(
+    'start_story',
+    {
+      title: 'Start a story for a direct request',
+      description:
+        'Puts a task your human gave you directly — in your own session, not through the board — on the board as a story you are already working on: it is created straight in `in_progress`, at the top of the column, and claimed by you. Call it before you write any code, as soon as you are asked, so your human can watch the work on the board; from then on treat it like any claimed story: `post_progress`, `move_story` through `in_test` to `finished`, never `accepted`. Never call it on your own initiative, for work nobody asked for, or to split a claimed story into pieces. Refused while you are still working on another story. The result carries the story and its project: work only inside that `project.path`.',
+      inputSchema: {
+        projectId: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('Required. The project the work belongs to — the one whose `path` you are working in (see `list_projects`).'),
+        title: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('Required. A short card title for the task, as your human would write it.'),
+        description: z
+          .string()
+          .optional()
+          .catch(undefined)
+          .describe('What you were asked to do, in enough detail that your human recognises the request.'),
+      },
+    },
+    async args => respond(ctx, undefined, () => startStory(ctx, startArgs.parse(args))),
   );
 
   server.registerTool(
@@ -565,16 +604,23 @@ function storyInHand(ctx: McpContext): Story | undefined {
   return story.status === 'in_progress' || story.status === 'in_test' ? story : undefined;
 }
 
-/** `claim_next_story`: takes the named story, or the top unblocked card in `todo`. */
-function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
-  // Claiming a second story would quietly abandon the first one: it would sit in
-  // `in_progress` with nobody working on it, and the human would have no way to tell.
+/**
+ * Refuses to take on a story while another is still in hand. A second story would quietly
+ * abandon the first one: it would sit in `in_progress` with nobody working on it, and the
+ * human would have no way to tell. `exceptStoryId` is the story being (re)claimed, if any.
+ */
+function requireFreeHands(ctx: McpContext, exceptStoryId?: string): void {
   const inHand = storyInHand(ctx);
-  if (inHand && inHand.id !== storyId) {
+  if (inHand && inHand.id !== exceptStoryId) {
     throw new TransitionError(
-      `You are already working on "${inHand.title}" (${inHand.id}, ${inHand.status}). Finish it or call release_story before claiming another story.`,
+      `You are already working on "${inHand.title}" (${inHand.id}, ${inHand.status}). Finish it or call release_story before taking on another story.`,
     );
   }
+}
+
+/** `claim_next_story`: takes the named story, or the top unblocked card in `todo`. */
+function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
+  requireFreeHands(ctx, storyId);
 
   const targetId = storyId ?? nextClaimable(ctx)?.id;
   if (!targetId) {
@@ -601,6 +647,20 @@ function claimStory(ctx: McpContext, storyId?: string): ToolOutcome {
   updateAgent(ctx.db, ctx.hub, identity(ctx), {currentStoryId: story.id, status: 'working'});
 
   return {payload: {claimed: true, story, project: projectOf(ctx, story) ?? null}, storyId: story.id};
+}
+
+/** `start_story`: puts a directly-given task on the board, already in the agent's hands. */
+function startStory(ctx: McpContext, input: z.infer<typeof startArgs>): ToolOutcome {
+  requireFreeHands(ctx);
+
+  const story = startStoryForAgent(ctx.db, ctx.hub, {
+    ...identity(ctx),
+    input,
+    note: 'Started from a request my human gave me directly, outside the board.',
+  });
+  updateAgent(ctx.db, ctx.hub, identity(ctx), {currentStoryId: story.id, status: 'working'});
+
+  return {payload: {story, project: projectOf(ctx, story) ?? null}, storyId: story.id};
 }
 
 /**

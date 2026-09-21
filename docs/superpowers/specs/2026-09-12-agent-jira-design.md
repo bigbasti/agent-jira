@@ -221,6 +221,7 @@ truth for the workflow. It states, in order:
 | `list_projects` | — | `{id, name, path}` |
 | `wait_for_work` | `timeoutSeconds?` (≤55) | Long-polls; resolves when a `todo` story is playable (played, or agent is autonomous), else `{work: false}`. Sets agent status `waiting`. |
 | `claim_next_story` | `storyId?` | Claims a specific or the highest-ranked unblocked `todo` story, moves it to `in_progress`, returns the full story + project path |
+| `start_story` | `projectId, title, description?` | For a task the human gave the agent directly (not via the board): creates the story straight into `in_progress`, top of the column, claimed by the caller, with a note saying where it came from. Refused while the agent holds another story; never for self-initiated work |
 | `move_story` | `storyId, status, note?` | Guarded transition; rejects `accepted` |
 | `post_progress` | `storyId, progressPct, label` | Updates the bar, appends a `progress` update |
 | `post_update` | `storyId, body, kind?` | Appends to the timeline |

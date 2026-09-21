@@ -337,6 +337,18 @@ function lastRankIn(db: Queryable, userId: string, status: Status, exceptStoryId
   return row?.rank ?? null;
 }
 
+/** The lowest rank currently in `status` — the top card of that column. */
+function firstRankIn(db: Queryable, userId: string, status: Status): string | null {
+  const row = db
+    .select({rank: stories.rank})
+    .from(stories)
+    .where(and(eq(stories.userId, userId), eq(stories.status, status)))
+    .orderBy(stories.rank)
+    .limit(1)
+    .get();
+  return row?.rank ?? null;
+}
+
 /**
  * The rank of a neighbour named in a move. Returns `null` when the neighbour is one of
  * `userId`'s stories but no longer sits in `status` — a drop computed against a board that
@@ -480,6 +492,71 @@ export function createStory(db: Database, hub: EventHub, userId: string, input: 
   });
 
   hub.publish(userId, {type: 'story.created', story});
+  return story;
+}
+
+export const startStorySchema = createStorySchema.pick({projectId: true, title: true, description: true});
+
+export interface StartStoryInput {
+  userId: string;
+  agentId: string;
+  /** Validated with `startStorySchema`. */
+  input: unknown;
+  /** The first line on the story's timeline, written by the agent: where the work came from. */
+  note: string;
+}
+
+/**
+ * Puts a task an agent was given directly — in its own session, not through the board — on
+ * the board as a story it is already working on: created straight into `in_progress`, at
+ * the top of the column, claimed by that agent, with `note` as its first timeline entry.
+ *
+ * This skips `draft`, `todo` and the Play gate on purpose: the human handed the work over
+ * by asking for it, so there is nothing left to stage. It takes no dependencies either — a
+ * story that is already being worked on cannot be waiting on another one. Whether the agent
+ * is free to take on another story is the caller's rule (see `claim_next_story`).
+ * Publishes `story.created` and the note after the transaction commits.
+ */
+export function startStoryForAgent(db: Database, hub: EventHub, {userId, agentId, input, note}: StartStoryInput): Story {
+  const parsed = startStorySchema.parse(input);
+
+  const {story, update} = db.transaction(tx => {
+    requireOwnedAgent(tx, userId, agentId);
+    requireOwnedProject(tx, userId, parsed.projectId);
+
+    const now = Date.now();
+    const row = {
+      id: nanoid(),
+      userId,
+      projectId: parsed.projectId,
+      title: parsed.title,
+      description: parsed.description ?? '',
+      model: DEFAULT_MODEL_ID,
+      status: 'in_progress' as const,
+      rank: rankBetween(null, firstRankIn(tx, userId, 'in_progress')),
+      progressPct: 0,
+      progressLabel: '',
+      claimedByAgentId: agentId,
+      stopRequested: false,
+      playRequestedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    tx.insert(stories).values(row).run();
+    const storyUpdate = insertUpdate(tx, {
+      storyId: row.id,
+      authorType: 'agent',
+      authorId: agentId,
+      kind: 'note',
+      body: note,
+      progressPct: null,
+    });
+
+    return {story: hydrate(tx, userId, row), update: storyUpdate};
+  });
+
+  hub.publish(userId, {type: 'story.created', story});
+  hub.publish(userId, {type: 'story.update', storyId: story.id, update});
   return story;
 }
 

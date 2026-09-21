@@ -36,6 +36,14 @@ describe('instructions', () => {
     expect(INSTRUCTIONS).toMatch(/kanban board/i);
   });
 
+  it('lets the agent put a directly-given task on the board, and only that', () => {
+    expect(INSTRUCTIONS).toContain('start_story');
+    expect(INSTRUCTIONS).toMatch(/directly/i);
+    expect(INSTRUCTIONS).toMatch(/own initiative/i);
+    // The story goes on the board before any work starts, not after.
+    expect(INSTRUCTIONS).toMatch(/before (you )?(write|touch|change) any/i);
+  });
+
   it('tells the agent to use the superpowers skills, naming each one', () => {
     expect(INSTRUCTIONS).toMatch(/superpowers/i);
     expect(INSTRUCTIONS).toMatch(/test-driven-development|TDD/i);
