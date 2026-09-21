@@ -48,7 +48,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     if (!identity) {
       return reply.code(401).send({error: 'invalid_token', message: 'A valid bearer token is required.'});
     }
-    const story = nextQueuedStory(app.db, identity.userId);
+    const story = nextQueuedStory(app.db, identity.userId, identity.agentId);
     return reply.send({story: story ?? null});
   });
 }

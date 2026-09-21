@@ -10,6 +10,7 @@ import {
   ValidationError,
   addUpdate,
   getStory,
+  isClaimableBy,
   listStories,
   listUpdates,
   moveStory,
@@ -137,17 +138,18 @@ function projectOf(ctx: McpContext, story: Story): Project | undefined {
 }
 
 /**
- * The stories an agent may claim right now: waiting in `todo`, not blocked by an
- * unfinished dependency, and not held by another agent. Rank order, so the first one is
- * the top card of the column — the one the human put at the top on purpose.
+ * The stories this agent may pick up right now, in rank order — so the first one is the
+ * top card of the column, the one the human put at the top on purpose.
+ *
+ * `isClaimableBy` is the whole rule (see `services/stories.ts`): waiting in `todo`,
+ * unblocked, not held by another agent, and *offered* — played by the human, or claimable
+ * at will because this agent is autonomous. Both automatic paths, `claim_next_story` with
+ * no argument and `wait_for_work`, go through here, so neither can start work the human
+ * has not handed over.
  */
 function claimableStories(ctx: McpContext): Story[] {
-  return listStories(ctx.db, ctx.userId).filter(
-    story =>
-      story.status === 'todo' &&
-      story.blockedBy.length === 0 &&
-      (story.claimedByAgentId === null || story.claimedByAgentId === ctx.agentId),
-  );
+  const agent = findOwnedAgent(ctx.db, ctx.userId, ctx.agentId);
+  return listStories(ctx.db, ctx.userId).filter(story => isClaimableBy(story, agent));
 }
 
 function nextClaimable(ctx: McpContext): Story | undefined {
@@ -325,7 +327,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       title: 'Wait for work',
       description:
-        'Parks until a story is waiting for you in `todo`, then returns it — call this when you have nothing to do instead of polling. Returns immediately if a story is already waiting. `timeoutSeconds` is clamped to 55; when it expires the result is `{work: false}` and you may simply call it again. Claim the story it returns with `claim_next_story`.',
+        'Parks until a story in `todo` is handed to you — one your human has pressed Play on, or, if `control.autonomous` is true, any unblocked story waiting there — then returns it. Call this when you have nothing to do instead of polling. Returns immediately if such a story is already waiting; a `todo` card nobody has played is not one, and you will keep waiting. `timeoutSeconds` is clamped to 55; when it expires the result is `{work: false}` and you may simply call it again. Claim the story it returns with `claim_next_story`.',
       inputSchema: {
         timeoutSeconds: z
           .number()
@@ -344,7 +346,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       title: 'Claim the next story',
       description:
-        'Claims a story and moves it to `in_progress`. With no argument it takes the top unblocked story in `todo`, skipping blocked ones; with `storyId` it claims that story, which is refused if it is blocked or already held by another agent. The result carries the story and its project: work only inside that `project.path`. You may hold only one story at a time — finish or `release_story` the one you have first. Between two stories, clear your context with `/clear` — and only claim another story unattended when `control.autonomous` is true.',
+        'Claims a story and moves it to `in_progress`. With no argument it takes the top story in `todo` that has been handed to you — played by your human, or any unblocked one if `control.autonomous` is true — skipping blocked ones; if nothing has been played it answers `{claimed: false}`, which is a normal answer and not an error. With `storyId` it claims that story whether or not it was played (your human naming a story is the same as handing it over), and is refused only if it is blocked or already held by another agent. The result carries the story and its project: work only inside that `project.path`. You may hold only one story at a time — finish or `release_story` the one you have first. Between two stories, clear your context with `/clear` — and only claim another story unattended when `control.autonomous` is true.',
       inputSchema: {
         storyId: z
           .string()

@@ -90,7 +90,14 @@ export const agents = sqliteTable(
     autonomous: integer('autonomous', {mode: 'boolean'}).notNull().default(false),
     status: text('status', {enum: ['offline', 'idle', 'waiting', 'working']}).notNull().default('offline'),
     currentStoryId: text('current_story_id').references((): AnySQLiteColumn => stories.id, {onDelete: 'set null'}),
+    /**
+     * The remark-delivery watermark, not a presence signal: `controlBlock` advances it on
+     * every tool call so each remark reaches the agent exactly once. Presence lives in
+     * `lastActiveAt` — the two must not be conflated.
+     */
     lastSeenAt: integer('last_seen_at'),
+    /** When the agent last called a tool. What the offline sweep reads; never a watermark. */
+    lastActiveAt: integer('last_active_at'),
     createdAt: integer('created_at').notNull(),
   },
   t => [index('agents_user_id_idx').on(t.userId)],

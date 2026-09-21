@@ -34,7 +34,9 @@ Never move a story to \`accepted\`. Only the human accepts work. Moving a story 
 
 When you reach \`finished\`, check \`control.autonomous\`. If it is true you are running unattended: clear your context with \`/clear\` and call \`claim_next_story\` to start the next story from a clean slate, carrying nothing from the story you just finished. If it is false, stop and ask your human before claiming anything else.
 
-If you have no story and want one, call \`wait_for_work\`. It parks until your human puts something in \`todo\` and then returns; when it does, call \`claim_next_story\`. If it returns no work, you may call it again. Hold one story at a time: finish it or give it back before you claim another.
+If you have no story and want one, call \`wait_for_work\`. It parks until your human hands you work and then returns it; when it does, call \`claim_next_story\`. If it returns no work, you may call it again. Hold one story at a time: finish it or give it back before you claim another.
+
+A story sitting in \`todo\` is not on its own an invitation to start. \`todo\` is your human's staging column as much as your queue: they hand a story over by pressing Play on it, and until they do it is not yours to pick up. The one exception is autonomous mode — if \`control.autonomous\` is true you may take any unblocked story waiting in \`todo\`. This is why \`wait_for_work\` can park while cards are visibly sitting in \`todo\`, and why \`claim_next_story\` can answer that there is nothing to claim: nothing has been played, and you are not autonomous. That is not a fault; wait, or ask your human.
 
 If you genuinely cannot complete a story — it is impossible as written, or it needs a decision only your human can make — do not leave the card sitting in \`in_progress\`. Say what you found and what is blocking you with \`post_update\`, then call \`release_story\` so the story goes back to \`todo\` where your human will see it.
 `;

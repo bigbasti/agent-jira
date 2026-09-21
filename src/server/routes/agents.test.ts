@@ -2,9 +2,10 @@ import {describe, it, expect, beforeEach} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {nanoid} from 'nanoid';
 import {createHarness} from '../testing/harness.js';
-import {agents, oauthClients, oauthTokens} from '../db/schema.js';
+import {agents, oauthClients, oauthTokens, stories} from '../db/schema.js';
 import {authenticateBearer, issueTokens} from '../oauth/tokens.js';
-import {moveStory} from '../services/stories.js';
+import {AGENT_OFFLINE_AFTER_MS, markStaleAgentsOffline} from '../services/agents.js';
+import {createStory, moveStory} from '../services/stories.js';
 import type {ServerEvent, Story, StoryUpdate} from '../../shared/types.js';
 
 describe('agents', () => {
@@ -225,6 +226,103 @@ describe('agents', () => {
       events.some(event => event.type === 'story.updated' && event.story.id === story.id && event.story.status === 'todo'),
     ).toBe(true);
     expect(events.some(event => event.type === 'agent.deleted' && event.id === agentId)).toBe(true);
+  });
+
+  it('releases only the stories the agent is actually working on', async () => {
+    const {cookie, user} = await h.register();
+    const {agentId} = connectAgent(user.id);
+    const accepted = await setupProjectAndStory(cookie);
+    const inFlight = createStory(h.db, h.app.hub, user.id, {projectId: accepted.projectId, title: 'Still going'});
+
+    // The state a claim that was never cleared leaves behind: one finished-and-accepted
+    // story still carrying the agent's id, and one the agent is genuinely mid-way through.
+    h.db.update(stories).set({status: 'accepted', claimedByAgentId: agentId}).where(eq(stories.id, accepted.id)).run();
+    h.db
+      .update(stories)
+      .set({status: 'in_progress', claimedByAgentId: agentId})
+      .where(eq(stories.id, inFlight.id))
+      .run();
+
+    const events: ServerEvent[] = [];
+    const unsubscribe = h.app.hub.subscribe(user.id, event => events.push(event));
+    const res = await h.app.inject({method: 'DELETE', url: `/api/agents/${agentId}`, headers: {cookie}});
+    unsubscribe();
+    expect(res.statusCode).toBe(204);
+
+    // The accepted story is the human's and stays where they put it.
+    const acceptedAfter = await getStory(cookie, accepted.id);
+    expect(acceptedAfter.status).toBe('accepted');
+    expect((await timeline(cookie, accepted.id)).some(u => u.body === 'Agent revoked — story released')).toBe(false);
+
+    // The story the agent was holding comes back to todo, with a note saying why.
+    const inFlightAfter = await getStory(cookie, inFlight.id);
+    expect(inFlightAfter.status).toBe('todo');
+    expect(inFlightAfter.claimedByAgentId).toBeNull();
+    expect((await timeline(cookie, inFlight.id)).some(u => u.body === 'Agent revoked — story released')).toBe(true);
+
+    const released = events.flatMap(event => (event.type === 'story.updated' ? [event.story.id] : []));
+    expect(released).toEqual([inFlight.id]);
+  });
+
+  it('marks an agent offline once it has not been heard from', async () => {
+    const {user} = await h.register();
+    const {agentId} = connectAgent(user.id);
+    h.db
+      .update(agents)
+      .set({status: 'working', lastActiveAt: Date.now() - AGENT_OFFLINE_AFTER_MS - 1})
+      .where(eq(agents.id, agentId))
+      .run();
+
+    const events: ServerEvent[] = [];
+    const unsubscribe = h.app.hub.subscribe(user.id, event => events.push(event));
+    markStaleAgentsOffline(h.db, h.app.hub);
+    unsubscribe();
+
+    expect(h.db.select().from(agents).where(eq(agents.id, agentId)).get()?.status).toBe('offline');
+    expect(
+      events.some(event => event.type === 'agent.updated' && event.agent.id === agentId && event.agent.status === 'offline'),
+    ).toBe(true);
+  });
+
+  it('sweeps a silent agent to offline while the app is running', async () => {
+    const app = await createHarness({agentSweepIntervalMs: 10});
+    const {user} = await app.register();
+    const agentId = nanoid();
+    app.db
+      .insert(agents)
+      .values({
+        id: agentId,
+        userId: user.id,
+        name: 'Crashed',
+        autonomous: false,
+        status: 'working',
+        currentStoryId: null,
+        lastSeenAt: null,
+        lastActiveAt: Date.now() - AGENT_OFFLINE_AFTER_MS - 1,
+        createdAt: Date.now(),
+      })
+      .run();
+
+    const deadline = Date.now() + 2000;
+    while (app.db.select().from(agents).where(eq(agents.id, agentId)).get()?.status !== 'offline') {
+      if (Date.now() > deadline) throw new Error('the agent was never swept offline');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(app.db.select().from(agents).where(eq(agents.id, agentId)).get()?.status).toBe('offline');
+  });
+
+  it('leaves an agent that was heard from recently alone', async () => {
+    const {user} = await h.register();
+    const {agentId} = connectAgent(user.id);
+    h.db.update(agents).set({status: 'waiting', lastActiveAt: Date.now()}).where(eq(agents.id, agentId)).run();
+
+    const events: ServerEvent[] = [];
+    const unsubscribe = h.app.hub.subscribe(user.id, event => events.push(event));
+    markStaleAgentsOffline(h.db, h.app.hub);
+    unsubscribe();
+
+    expect(h.db.select().from(agents).where(eq(agents.id, agentId)).get()?.status).toBe('waiting');
+    expect(events).toEqual([]);
   });
 
   it('revoking an agent holding no story publishes no story.updated event', async () => {

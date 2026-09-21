@@ -103,8 +103,13 @@ export function controlBlock(db: Database, {userId, agentId, storyId}: ControlBl
   const now = Date.now();
   const newestDelivered = remarkRows.reduce((max, row) => Math.max(max, row.createdAt), Number.NEGATIVE_INFINITY);
   const lastSeenAt = Math.max(since, now - 1, newestDelivered);
+  // `last_active_at` is the presence signal and `last_seen_at` is the remark watermark;
+  // they are written together here because a tool call is the one event that means both
+  // "the agent is alive" and "the agent has now heard everything up to this point", but
+  // they are never interchangeable — the watermark moves backwards relative to now by a
+  // millisecond on purpose, and presence must not.
   db.update(agents)
-    .set({lastSeenAt})
+    .set({lastSeenAt, lastActiveAt: now})
     .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
     .run();
 

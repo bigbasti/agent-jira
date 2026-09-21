@@ -1,4 +1,4 @@
-import {and, desc, eq} from 'drizzle-orm';
+import {and, desc, eq, inArray, isNull, lt, ne, or} from 'drizzle-orm';
 import {nanoid} from 'nanoid';
 import {z} from 'zod';
 import type {Database} from '../db/index.js';
@@ -6,7 +6,7 @@ import {agents, oauthTokens, stories, storyUpdates} from '../db/schema.js';
 import type {EventHub} from '../events/hub.js';
 import {MAX_AGENT_NAME_LENGTH, sanitiseAgentName} from '../oauth/authorize.js';
 import {listProjects, NotFoundError} from './projects.js';
-import {getStory, listStories} from './stories.js';
+import {getStory, isClaimableBy, listStories} from './stories.js';
 import {rankBetween} from '../../shared/rank.js';
 import type {Agent, AgentStatus} from '../../shared/types.js';
 
@@ -134,30 +134,42 @@ function endOfTodo(tx: Tx, userId: string): string {
 }
 
 /**
- * Revokes an agent: deletes its OAuth tokens (so its next MCP call 401s), releases any
- * story it holds back to `todo` with a `system` note, then deletes the agent row — all in
- * one transaction, so a crash partway through can never leave a token alive with no agent
- * behind it, or a story stuck `in_progress` with no claimant.
+ * Revokes an agent: deletes its OAuth tokens (so its next MCP call 401s), releases every
+ * story it is actually working on back to `todo` with a `system` note, then deletes the
+ * agent row — all in one transaction, so a crash partway through can never leave a token
+ * alive with no agent behind it, or a story stuck `in_progress` with no claimant.
  *
- * Publishes the released story's `story.updated` (if there was one) and `agent.deleted`
- * after the transaction commits, so every open tab drops the agent and sees its story land
- * back in `todo` without a full refetch.
+ * Publishes a `story.updated` for each released story and `agent.deleted` after the
+ * transaction commits, so every open tab drops the agent and sees its stories land back
+ * in `todo` without a full refetch.
  */
 export function revokeAgent(db: Database, hub: EventHub, userId: string, agentId: string): void {
-  const releasedStoryId = db.transaction(tx => {
+  const releasedStoryIds = db.transaction(tx => {
     requireOwnedAgent(tx, userId, agentId);
 
     tx.delete(oauthTokens)
       .where(and(eq(oauthTokens.userId, userId), eq(oauthTokens.agentId, agentId)))
       .run();
 
+    // Every story this agent is genuinely mid-way through — `.all()`, and filtered to the
+    // two working columns. A claim is supposed to be cleared the moment a story leaves an
+    // agent's hands (see `moveStory`), but a stale one left on a `finished` or `accepted`
+    // story must never be what a revoke acts on: dragging the human's accepted work back
+    // to `todo` destroys a decision only they get to make.
     const claimed = tx
       .select({id: stories.id})
       .from(stories)
-      .where(and(eq(stories.userId, userId), eq(stories.claimedByAgentId, agentId)))
-      .get();
+      .where(
+        and(
+          eq(stories.userId, userId),
+          eq(stories.claimedByAgentId, agentId),
+          inArray(stories.status, ['in_progress', 'in_test']),
+        ),
+      )
+      .orderBy(stories.rank)
+      .all();
 
-    if (claimed) {
+    for (const story of claimed) {
       const now = Date.now();
       tx.update(stories)
         .set({
@@ -168,12 +180,12 @@ export function revokeAgent(db: Database, hub: EventHub, userId: string, agentId
           playRequestedAt: null,
           updatedAt: now,
         })
-        .where(eq(stories.id, claimed.id))
+        .where(eq(stories.id, story.id))
         .run();
       tx.insert(storyUpdates)
         .values({
           id: nanoid(),
-          storyId: claimed.id,
+          storyId: story.id,
           authorType: 'system',
           authorId: 'system',
           kind: 'status_change',
@@ -188,13 +200,44 @@ export function revokeAgent(db: Database, hub: EventHub, userId: string, agentId
       .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
       .run();
 
-    return claimed?.id ?? null;
+    return claimed.map(story => story.id);
   });
 
-  if (releasedStoryId) {
-    hub.publish(userId, {type: 'story.updated', story: getStory(db, userId, releasedStoryId)});
+  for (const storyId of releasedStoryIds) {
+    hub.publish(userId, {type: 'story.updated', story: getStory(db, userId, storyId)});
   }
   hub.publish(userId, {type: 'agent.deleted', id: agentId});
+}
+
+/**
+ * How long an agent may go without calling a tool before the board stops claiming it is
+ * there. Generous on purpose: an agent deep in an implementation step can be minutes
+ * between tool calls, and a pill that flickers offline mid-story is worse than one that
+ * takes a while to admit a crash. `last_active_at` is written on every MCP call (see
+ * `mcp/control.ts`); `last_seen_at` is the remark watermark and means nothing here.
+ */
+export const AGENT_OFFLINE_AFTER_MS = 10 * 60_000;
+
+/**
+ * Marks every agent that has not been heard from within `AGENT_OFFLINE_AFTER_MS` as
+ * `offline`, publishing `agent.updated` for each — the only path back to `offline` after
+ * consent. Without it a crashed agent keeps pulsing "working" on the board forever.
+ *
+ * The story it was holding is deliberately left alone: an agent that comes back reconnects
+ * to its own work, and taking the claim away here would fight with the human's Stop/revoke
+ * — the two deliberate ways a story is taken back.
+ */
+export function markStaleAgentsOffline(db: Database, hub: EventHub, now = Date.now()): void {
+  const stale = db
+    .select()
+    .from(agents)
+    .where(and(ne(agents.status, 'offline'), or(isNull(agents.lastActiveAt), lt(agents.lastActiveAt, now - AGENT_OFFLINE_AFTER_MS))))
+    .all();
+
+  for (const row of stale) {
+    db.update(agents).set({status: 'offline'}).where(eq(agents.id, row.id)).run();
+    hub.publish(row.userId, {type: 'agent.updated', agent: {...toAgent(row), status: 'offline'}});
+  }
 }
 
 /** What the host runner needs to cold-start an agent on one story. */
@@ -205,25 +248,29 @@ export interface QueuedStory {
 }
 
 /**
- * The oldest played story `userId` has waiting for an agent to pick up: in `todo`,
- * unblocked, and not already claimed. This is the cold-start counterpart to the MCP
+ * The next story `userId` has waiting for an agent to pick up: in `todo`, unblocked, not
+ * already claimed, and playable by `agentId` — played by the human, or any queued story
+ * when that agent is autonomous. This is the cold-start counterpart to the MCP
  * `wait_for_work` long-poll — where that tool answers an agent that is already parked and
  * connected, this is what the host runner script polls when *no* agent is running at all,
- * so it knows what to launch and where.
+ * so it knows what to launch and where. Both go through the same `isClaimableBy` rule, so
+ * the two queues cannot disagree about what an agent is allowed to start.
  *
- * Ties in `playRequestedAt` (a played-but-not-yet-picked-up backlog) resolve oldest first,
- * same as any other queue: the story a human has been waiting longest on goes first.
+ * Played stories go first, oldest first: the story a human has been waiting longest on
+ * goes first. Anything an autonomous agent may take unprompted queues behind all of them,
+ * in board order.
  */
-export function nextQueuedStory(db: Database, userId: string): QueuedStory | undefined {
+export function nextQueuedStory(db: Database, userId: string, agentId?: string): QueuedStory | undefined {
+  const agent = agentId ? findOwnedAgent(db, userId, agentId) : undefined;
   const queued = listStories(db, userId)
-    .filter(
-      story =>
-        story.status === 'todo' &&
-        story.playRequestedAt !== null &&
-        story.blockedBy.length === 0 &&
-        story.claimedByAgentId === null,
-    )
-    .sort((a, b) => (a.playRequestedAt ?? 0) - (b.playRequestedAt ?? 0));
+    .filter(story => isClaimableBy(story, agent))
+    // `listStories` is already in rank order and `sort` is stable, so unplayed stories keep
+    // the order the human put them in.
+    .sort((a, b) => {
+      const left = a.playRequestedAt ?? Number.POSITIVE_INFINITY;
+      const right = b.playRequestedAt ?? Number.POSITIVE_INFINITY;
+      return left === right ? 0 : left < right ? -1 : 1;
+    });
 
   const story = queued[0];
   if (!story) return undefined;

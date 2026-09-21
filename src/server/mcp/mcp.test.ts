@@ -7,7 +7,7 @@ import {createHarness} from '../testing/harness.js';
 import {agents, oauthClients, stories, storyUpdates} from '../db/schema.js';
 import {issueTokens} from '../oauth/tokens.js';
 import {createProject} from '../services/projects.js';
-import {addUpdate, createStory, moveStory, requestPlay} from '../services/stories.js';
+import {addUpdate, createStory, moveStory, requestPlay, requestStop} from '../services/stories.js';
 import {clampTimeoutSeconds} from './tools.js';
 import {controlBlock} from './control.js';
 import type {Project, ServerEvent, Story, StoryUpdate} from '../../shared/types.js';
@@ -90,10 +90,20 @@ describe('mcp server', () => {
     return createStory(h.db, h.app.hub, userId, {projectId, title, dependsOn});
   }
 
-  /** A story sitting in the `todo` column, ready to be claimed. */
-  function seedTodoStory(userId: string, projectId: string, title: string, dependsOn: string[] = []): Story {
+  /** A story sitting in the `todo` column, unplayed — queued, but not handed to an agent. */
+  function seedUnplayedStory(userId: string, projectId: string, title: string, dependsOn: string[] = []): Story {
     const story = seedStory(userId, projectId, title, dependsOn);
     return moveStory(h.db, h.app.hub, {userId, storyId: story.id, status: 'todo', actor: 'user'});
+  }
+
+  /**
+   * A story in `todo` that the human has pressed Play on — the state an agent may pick up
+   * from. Sitting in `todo` is not on its own an invitation to start work (see the
+   * play/autonomy gate below), so every test that expects a claim to succeed starts here.
+   */
+  function seedTodoStory(userId: string, projectId: string, title: string, dependsOn: string[] = []): Story {
+    const story = seedUnplayedStory(userId, projectId, title, dependsOn);
+    return requestPlay(h.db, h.app.hub, userId, story.id);
   }
 
   async function connect(token: string): Promise<Client> {
@@ -303,6 +313,62 @@ describe('mcp server', () => {
       expect(storyRow(next.id).claimedByAgentId).toBe(agentId);
       expect(agentRow(agentId).currentStoryId).toBe(next.id);
       expect(agentRow(agentId).status).toBe('working');
+    });
+
+    it('does not pick up a story the human has not played', async () => {
+      const {user, project} = await seedUser();
+      const parked = seedUnplayedStory(user.id, project.id, 'Staged, not started');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const payload = await ok<{claimed: boolean; story: Story | null}>(client, 'claim_next_story');
+      expect(payload.claimed).toBe(false);
+      expect(storyRow(parked.id).status).toBe('todo');
+      expect(agentRow(agentId).currentStoryId).toBeNull();
+
+      // Pressing Play is what hands it over.
+      requestPlay(h.db, h.app.hub, user.id, parked.id);
+      const second = await claimed(client);
+      expect(second.story.id).toBe(parked.id);
+    });
+
+    it('lets an autonomous agent pick up unplayed work', async () => {
+      const {user, project} = await seedUser();
+      const parked = seedUnplayedStory(user.id, project.id, 'Staged, not started');
+      const {token} = seedAgent(user.id, {autonomous: true});
+      const client = await connect(token);
+
+      const payload = await claimed(client);
+      expect(payload.story.id).toBe(parked.id);
+    });
+
+    it('claims a story named by id even when it has not been played', async () => {
+      const {user, project} = await seedUser();
+      const parked = seedUnplayedStory(user.id, project.id, 'Asked for by name');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const payload = await ok<{story: Story}>(client, 'claim_next_story', {storyId: parked.id});
+      expect(payload.story.id).toBe(parked.id);
+      expect(payload.story.status).toBe('in_progress');
+    });
+
+    it('does not pick a stopped-and-released story straight back up', async () => {
+      const {user, project} = await seedUser();
+      const story = seedTodoStory(user.id, project.id, 'Stop me');
+      const {token} = seedAgent(user.id);
+      const client = await connect(token);
+      await claimed(client);
+
+      requestStop(h.db, h.app.hub, user.id, story.id);
+      await ok(client, 'release_story', {storyId: story.id, reason: 'Asked to stop'});
+      expect(storyRow(story.id).status).toBe('todo');
+
+      const again = await ok<{claimed: boolean}>(client, 'claim_next_story');
+      expect(again.claimed).toBe(false);
+
+      const waited = await ok<{work: boolean}>(client, 'wait_for_work', {timeoutSeconds: 1});
+      expect(waited.work).toBe(false);
     });
 
     it('claims a named story when given a storyId', async () => {
@@ -904,6 +970,21 @@ describe('mcp server', () => {
     });
   });
 
+  describe('presence', () => {
+    it('records that the agent was heard from on every tool call', async () => {
+      const {user} = await seedUser();
+      const {agentId, token} = seedAgent(user.id);
+      expect(agentRow(agentId).lastActiveAt).toBeNull();
+
+      const client = await connect(token);
+      await ok(client, 'get_board');
+
+      // `last_seen_at` is the remark-delivery watermark, not a presence signal — this is
+      // the column the offline sweep reads.
+      expect(agentRow(agentId).lastActiveAt ?? 0).toBeGreaterThan(Date.now() - 5000);
+    });
+  });
+
   describe('waiting for work', () => {
     it('returns immediately when a claimable story is already waiting', async () => {
       const {user, project} = await seedUser();
@@ -918,6 +999,24 @@ describe('mcp server', () => {
       expect(Date.now() - startedAt).toBeLessThan(2000);
     });
 
+    it('stays parked on an unplayed story until the human presses play', async () => {
+      const {user, project} = await seedUser();
+      const parked = seedUnplayedStory(user.id, project.id, 'Staged, not started');
+      const {agentId, token} = seedAgent(user.id);
+      const client = await connect(token);
+
+      const pending = ok<{work: boolean; story: Story | null}>(client, 'wait_for_work', {timeoutSeconds: 30});
+      await waitUntil(() => agentRow(agentId).status === 'waiting');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(agentRow(agentId).status).toBe('waiting');
+
+      requestPlay(h.db, h.app.hub, user.id, parked.id);
+
+      const payload = await pending;
+      expect(payload.work).toBe(true);
+      expect(payload.story?.id).toBe(parked.id);
+    });
+
     it('resolves when the human moves a story into todo', async () => {
       const {user, project} = await seedUser();
       const story = seedStory(user.id, project.id, 'Still a draft');
@@ -928,6 +1027,7 @@ describe('mcp server', () => {
       await waitUntil(() => agentRow(agentId).status === 'waiting');
 
       moveStory(h.db, h.app.hub, {userId: user.id, storyId: story.id, status: 'todo', actor: 'user'});
+      requestPlay(h.db, h.app.hub, user.id, story.id);
 
       const payload = await pending;
       expect(payload.work).toBe(true);
@@ -981,6 +1081,7 @@ describe('mcp server', () => {
       await waitUntil(() => agentRow(agentId).status === 'waiting');
 
       moveStory(h.db, h.app.hub, {userId: user.id, storyId: story.id, status: 'todo', actor: 'user'});
+      requestPlay(h.db, h.app.hub, user.id, story.id);
       await pending;
       expect(agentRow(agentId).status).toBe('idle');
 

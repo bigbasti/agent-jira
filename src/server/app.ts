@@ -16,6 +16,7 @@ import {mcpRoutes} from './routes/mcp.js';
 import {registerWsRoute, type WsRouteOptions} from './routes/ws.js';
 import {EventHub} from './events/hub.js';
 import {warmDummyHash} from './services/auth.js';
+import {markStaleAgentsOffline} from './services/agents.js';
 
 const VERSION = '0.1.0';
 
@@ -71,7 +72,15 @@ export interface BuildAppOptions extends WsRouteOptions {
    * real `npm run build` having run first.
    */
   webDir?: string;
+  /**
+   * How often the agent-presence sweep runs, in ms. Defaults to a minute; tests inject a
+   * short interval rather than waiting one out.
+   */
+  agentSweepIntervalMs?: number;
 }
+
+/** How often stale agents are swept to `offline` — see `markStaleAgentsOffline`. */
+const DEFAULT_AGENT_SWEEP_INTERVAL_MS = 60_000;
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const config = opts.config ?? loadConfig();
@@ -130,10 +139,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     });
   }
 
+  // Nothing tells the board an agent has crashed — an MCP request is the only contact it
+  // has, and a dead agent simply stops making them. This is what turns that silence into
+  // `offline` instead of a pill that pulses "working" forever. Unref'd, so it never holds
+  // the process open on its own.
+  const agentSweep = setInterval(
+    () => markStaleAgentsOffline(app.db, hub),
+    opts.agentSweepIntervalMs ?? DEFAULT_AGENT_SWEEP_INTERVAL_MS,
+  );
+  agentSweep.unref();
+
   // Registered last so it runs first on close (onClose hooks run in reverse-registration
   // order): resolve any in-flight `waitFor` calls before the database handle underneath
   // them disappears.
   app.addHook('onClose', () => {
+    clearInterval(agentSweep);
     hub.close();
     opts.db.$client.close();
   });

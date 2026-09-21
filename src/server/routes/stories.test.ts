@@ -182,6 +182,50 @@ describe('stories', () => {
     expect(accepted.json().status).toBe('accepted');
   });
 
+  it('clears the claim when the story leaves the agent’s hands', async () => {
+    const {cookie, user, projectId} = await setup();
+    const agentId = addAgent(user.id, 'agent-1');
+    const story = await createStory(cookie, {projectId, title: 'Agent work'});
+    await move(cookie, story.id, {status: 'todo'});
+
+    const base = {userId: user.id, storyId: story.id, actor: 'agent' as const, agentId};
+    expect(moveStory(h.db, h.app.hub, {...base, status: 'in_progress'}).claimedByAgentId).toBe(agentId);
+    expect(moveStory(h.db, h.app.hub, {...base, status: 'in_test'}).claimedByAgentId).toBe(agentId);
+
+    // Handing the work over ends the agent's hold on it: a story in `finished` (or
+    // `accepted` after it) is the human's, and an agent must not still be holding a claim
+    // on work it has given back.
+    const finished = moveStory(h.db, h.app.hub, {...base, status: 'finished'});
+    expect(finished.claimedByAgentId).toBeNull();
+    expect((await getStory(cookie, story.id)).claimedByAgentId).toBeNull();
+
+    // It can still take its own work back for a fix — that re-takes the claim.
+    expect(moveStory(h.db, h.app.hub, {...base, status: 'in_progress'}).claimedByAgentId).toBe(agentId);
+  });
+
+  it('drops the agent’s presence when a human takes a story out of its hands', async () => {
+    const {cookie, user, projectId} = await setup();
+    const agentId = addAgent(user.id, 'agent-1');
+    const story = await createStory(cookie, {projectId, title: 'Agent work'});
+    await move(cookie, story.id, {status: 'todo'});
+    moveStory(h.db, h.app.hub, {userId: user.id, storyId: story.id, status: 'in_progress', actor: 'agent', agentId});
+    h.db.update(agents).set({currentStoryId: story.id, status: 'working'}).where(eq(agents.id, agentId)).run();
+
+    const events: ServerEvent[] = [];
+    const unsubscribe = h.app.hub.subscribe(user.id, event => events.push(event));
+    expect((await move(cookie, story.id, {status: 'todo'})).statusCode).toBe(200);
+    unsubscribe();
+
+    const agent = h.db.select().from(agents).where(eq(agents.id, agentId)).get()!;
+    expect(agent.currentStoryId).toBeNull();
+    expect(agent.status).toBe('idle');
+    expect(
+      events.some(
+        event => event.type === 'agent.updated' && event.agent.id === agentId && event.agent.currentStoryId === null,
+      ),
+    ).toBe(true);
+  });
+
   it("refuses to let an agent move another agent's story", async () => {
     const {cookie, user, projectId} = await setup();
     const mine = addAgent(user.id, 'agent-1');

@@ -11,7 +11,7 @@ import {canTransition, type Actor} from '../../shared/transitions.js';
 import {blockedBy, wouldCycle} from '../../shared/dependencies.js';
 import {DEFAULT_MODEL_ID, findModel} from '../../shared/models.js';
 import {STATUSES, type Status} from '../../shared/status.js';
-import type {Story, StoryUpdate, StoryUpdateAuthorType, StoryUpdateKind} from '../../shared/types.js';
+import type {Agent, Story, StoryUpdate, StoryUpdateAuthorType, StoryUpdateKind} from '../../shared/types.js';
 
 /**
  * A refused status transition — the actor is not allowed to make this move (or, for an
@@ -219,6 +219,52 @@ function requireOwnedProject(db: Queryable, userId: string, projectId: string): 
   }
 }
 
+/**
+ * The columns a story is in while an agent is actually working on it. A claim is only
+ * meaningful here: the moment a story leaves these two — handed over at `finished`, or
+ * given back to `todo` — it stops being the agent's, and the claim goes with it.
+ */
+const WORKING_STATUSES: ReadonlySet<Status> = new Set<Status>(['in_progress', 'in_test']);
+
+/** Whether a story in `status` is in some agent's hands. */
+export function isWorkingStatus(status: Status): boolean {
+  return WORKING_STATUSES.has(status);
+}
+
+/**
+ * Clears an agent's hold on a story that has just left its hands, and returns the agent
+ * as it now is so the caller can publish `agent.updated` once the transaction commits.
+ *
+ * Returns `null` when there is nothing to do — the agent is gone, or it was already
+ * pointed at something else. An `offline` agent keeps that status: it has not become
+ * reachable again just because its story moved.
+ */
+function clearAgentHold(tx: Tx, userId: string, agentId: string, storyId: string): Agent | null {
+  const row = tx
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
+    .get();
+  if (!row || row.currentStoryId !== storyId) return null;
+
+  const status = row.status === 'offline' ? 'offline' : ('idle' as const);
+  tx.update(agents)
+    .set({currentStoryId: null, status})
+    .where(and(eq(agents.id, agentId), eq(agents.userId, userId)))
+    .run();
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    autonomous: row.autonomous,
+    status,
+    currentStoryId: null,
+    lastSeenAt: row.lastSeenAt,
+    createdAt: row.createdAt,
+  };
+}
+
 function insertUpdate(
   tx: Tx,
   update: {
@@ -340,6 +386,26 @@ function rankForMove(db: Queryable, existing: StoryRow, input: MoveStoryInput, s
     }
     throw err;
   }
+}
+
+/**
+ * Whether an agent may pick this story up of its own accord.
+ *
+ * A story sitting in `todo` is not on its own an invitation to start work: `todo` is also
+ * the human's staging column, and an agent that started editing files in a project
+ * directory because a card was dragged one column across would be doing work nobody asked
+ * for. The invitation is either the human pressing Play on the card (`playRequestedAt`) or
+ * the agent being autonomous — the gate spec §6 describes for `wait_for_work`, and the one
+ * the host runner's cold-start poll already applied.
+ *
+ * This is the rule for *automatic* selection only. A human naming a story by id —
+ * `claim_next_story(storyId)` — is its own authorisation and does not come through here.
+ */
+export function isClaimableBy(story: Story, agent: {id: string; autonomous: boolean} | undefined): boolean {
+  if (story.status !== 'todo') return false;
+  if (story.blockedBy.length > 0) return false;
+  if (story.claimedByAgentId !== null && story.claimedByAgentId !== agent?.id) return false;
+  return story.playRequestedAt !== null || agent?.autonomous === true;
 }
 
 /**
@@ -465,6 +531,12 @@ export function updateStory(db: Database, hub: EventHub, userId: string, storyId
  * rather than a release, so the progress bar starts over too. A move from `todo` to `todo`
  * is only a reorder of the queue and clears nothing.
  *
+ * More generally, a story that leaves `in_progress`/`in_test` has left the agent's hands —
+ * handed over at `finished` as much as given back to `todo` — so the claim is cleared and
+ * the agent holding it stops showing as working on it (`agent.updated`). Without that a
+ * claim outlives the work: an agent ends up holding two stories at once, and revoking it
+ * picks one of them arbitrarily.
+ *
  * Every move that changes the column records a `status_change` update and publishes
  * `story.update` alongside `story.moved`, after the transaction commits. A move within one
  * column is a pure reorder: it still publishes `story.moved` so every board sees the new
@@ -474,7 +546,7 @@ export function updateStory(db: Database, hub: EventHub, userId: string, storyId
 export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): Story {
   const {userId, storyId, status, actor, agentId} = input;
 
-  const {story, update} = db.transaction(tx => {
+  const {story, update, agent} = db.transaction(tx => {
     const existing = requireOwnedStory(tx, userId, storyId);
     const from = existing.status;
 
@@ -491,8 +563,11 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
       }
       requireOwnedAgent(tx, userId, agentId);
       author = {authorType: 'agent', authorId: agentId};
-      if (from === 'todo' && status === 'in_progress') {
-        if (claimedByAgentId !== null && claimedByAgentId !== agentId) {
+      // Moving an unheld story into `in_progress` is what takes the claim — out of `todo`
+      // normally, and out of `finished` when the agent picks its own handed-over work back
+      // up for a fix (the claim was cleared when it handed it over).
+      if (status === 'in_progress' && claimedByAgentId !== agentId) {
+        if (claimedByAgentId !== null) {
           throw new TransitionError('That story is already claimed by another agent.');
         }
         // A blocked story may sit in `todo`, but no agent may pick it up — this is the one
@@ -513,10 +588,14 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
     // in `todo` is a reorder of the queue, and must leave a pending play or stop alone.
     const releasing = status === 'todo' && from !== 'todo';
     const rework = releasing && (from === 'finished' || from === 'accepted');
+    // A story that leaves `in_progress`/`in_test` has left the agent's hands, whoever moved
+    // it: handed over at `finished`, given back to `todo`, or pulled out by the human. The
+    // claim goes with it, so a claim can never outlive the work it stands for.
+    const unclaiming = releasing || (isWorkingStatus(from) && !isWorkingStatus(status));
     const patch = {
       status,
       rank: rankForMove(tx, existing, input, status),
-      claimedByAgentId: releasing ? null : claimedByAgentId,
+      claimedByAgentId: unclaiming ? null : claimedByAgentId,
       stopRequested: releasing ? false : existing.stopRequested,
       playRequestedAt: releasing ? null : existing.playRequestedAt,
       progressPct: rework ? 0 : existing.progressPct,
@@ -539,12 +618,21 @@ export function moveStory(db: Database, hub: EventHub, input: MoveStoryInput): S
             progressPct: null,
           });
 
-    return {story: hydrate(tx, userId, {...existing, ...patch}), update: storyUpdate};
+    // The agent that was holding it must stop showing as working on a card it no longer
+    // has — including when it was a human who took the story back, which no agent-side
+    // code path would ever hear about.
+    const heldBy = existing.claimedByAgentId;
+    const agent = unclaiming && heldBy ? clearAgentHold(tx, userId, heldBy, storyId) : null;
+
+    return {story: hydrate(tx, userId, {...existing, ...patch}), update: storyUpdate, agent};
   });
 
   hub.publish(userId, {type: 'story.moved', story});
   if (update) {
     hub.publish(userId, {type: 'story.update', storyId, update});
+  }
+  if (agent) {
+    hub.publish(userId, {type: 'agent.updated', agent});
   }
   return story;
 }
